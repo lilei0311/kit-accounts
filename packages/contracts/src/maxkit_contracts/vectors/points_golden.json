@@ -1,0 +1,557 @@
+{
+  "version": 1,
+  "provenance": "kit-py stand-in for Phase 1. Locked to the 2026-10-16 req card: one lot+entry+hold ledger, single available balance, no paid/free buckets. Not copied from yangong points*.test.ts; that private tree was unreadable here. Product SKU amounts appear only as external ref strings.",
+  "cases": [
+    {
+      "id": "grant_increases_available",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "source": "purchase",
+          "idempotency_key": "g1",
+          "lot_id": "lot1",
+          "ref": "sku:A"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 1000,
+          "held": 0,
+          "remaining": 1000
+        },
+        {
+          "op": "lots",
+          "owner_id": "p1",
+          "lots": [
+            { "id": "lot1", "remaining": 1000, "reserved": 0, "original_amount": 1000 }
+          ]
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [{ "kind": "grant", "amount": 1000, "lot_id": "lot1" }]
+        }
+      ]
+    },
+    {
+      "id": "single_balance_not_dual_bucket",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "source": "purchase",
+          "idempotency_key": "g-a",
+          "lot_id": "lot-a",
+          "ref": "sku:A"
+        },
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 2500,
+          "source": "grant",
+          "idempotency_key": "g-b",
+          "lot_id": "lot-b",
+          "ref": "sku:B"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 3500,
+          "held": 0,
+          "remaining": 3500
+        }
+      ]
+    },
+    {
+      "id": "hold_then_settle",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 3000,
+          "source": "purchase",
+          "idempotency_key": "g-dh",
+          "lot_id": "lot-dh",
+          "ref": "sku:dh_std_2m"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 3000,
+          "idempotency_key": "h-dh",
+          "hold_id": "hold-dh",
+          "ref": "sku:dh_std_2m"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 3000,
+          "remaining": 3000
+        },
+        {
+          "op": "lots",
+          "owner_id": "p1",
+          "lots": [{ "id": "lot-dh", "remaining": 3000, "reserved": 3000, "original_amount": 3000 }]
+        },
+        { "op": "settle", "hold_id": "hold-dh" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "remaining": 0
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "grant", "amount": 3000, "lot_id": "lot-dh" },
+            { "kind": "hold", "amount": 3000, "lot_id": "lot-dh", "hold_id": "hold-dh" },
+            { "kind": "settle", "amount": 3000, "lot_id": "lot-dh", "hold_id": "hold-dh" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hold_then_release",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 400,
+          "idempotency_key": "h1",
+          "hold_id": "hold1"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 600,
+          "held": 400,
+          "remaining": 1000
+        },
+        { "op": "release", "hold_id": "hold1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 1000,
+          "held": 0,
+          "remaining": 1000
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "grant", "amount": 1000 },
+            { "kind": "hold", "amount": 400 },
+            { "kind": "release", "amount": 400 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "insufficient_hold_is_atomic",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 1001,
+          "idempotency_key": "h-over",
+          "hold_id": "hold-over",
+          "expect": "insufficient"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 1000,
+          "held": 0,
+          "remaining": 1000
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [{ "kind": "grant", "amount": 1000 }]
+        }
+      ]
+    },
+    {
+      "id": "two_holds_then_partial_settle",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 600,
+          "idempotency_key": "h1",
+          "hold_id": "hold1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 500,
+          "idempotency_key": "h-over",
+          "hold_id": "hold-over",
+          "expect": "insufficient"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 400,
+          "idempotency_key": "h2",
+          "hold_id": "hold2"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 1000,
+          "remaining": 1000
+        },
+        { "op": "settle", "hold_id": "hold1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 400,
+          "remaining": 400
+        }
+      ]
+    },
+    {
+      "id": "fifo_soonest_expiry",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "source": "grant",
+          "idempotency_key": "g-later",
+          "lot_id": "lot-later"
+        },
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 400,
+          "source": "promo",
+          "idempotency_key": "g-soon",
+          "lot_id": "lot-soon",
+          "expires_at": "2026-10-17T00:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 500,
+          "idempotency_key": "h1",
+          "hold_id": "hold1"
+        },
+        {
+          "op": "lots",
+          "owner_id": "p1",
+          "lots": [
+            { "id": "lot-soon", "remaining": 400, "reserved": 400, "original_amount": 400 },
+            { "id": "lot-later", "remaining": 1000, "reserved": 100, "original_amount": 1000 }
+          ]
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "grant", "amount": 1000, "lot_id": "lot-later" },
+            { "kind": "grant", "amount": 400, "lot_id": "lot-soon" },
+            { "kind": "hold", "amount": 400, "lot_id": "lot-soon", "hold_id": "hold1" },
+            { "kind": "hold", "amount": 100, "lot_id": "lot-later", "hold_id": "hold1" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "expired_unreserved_not_spendable",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1",
+          "expires_at": "2026-10-16T01:00:00+00:00"
+        },
+        { "op": "set_now", "now": "2026-10-16T02:00:00+00:00" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "remaining": 1000
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 1,
+          "idempotency_key": "h1",
+          "hold_id": "hold1",
+          "expect": "insufficient"
+        },
+        { "op": "expire_due", "owner_id": "p1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "remaining": 0
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "grant", "amount": 1000, "lot_id": "lot1" },
+            { "kind": "expire", "amount": 1000, "lot_id": "lot1" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "release_after_expiry_does_not_restore",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1",
+          "expires_at": "2026-10-16T01:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 400,
+          "idempotency_key": "h1",
+          "hold_id": "hold1"
+        },
+        { "op": "set_now", "now": "2026-10-16T02:00:00+00:00" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 400,
+          "remaining": 1000
+        },
+        { "op": "release", "hold_id": "hold1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "remaining": 600
+        },
+        { "op": "expire_due", "owner_id": "p1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "remaining": 0
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "grant", "amount": 1000 },
+            { "kind": "hold", "amount": 400 },
+            { "kind": "release", "amount": 400 },
+            { "kind": "expire", "amount": 400 },
+            { "kind": "expire", "amount": 600 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "settle_after_expiry_consumes_hold",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1",
+          "expires_at": "2026-10-16T01:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 400,
+          "idempotency_key": "h1",
+          "hold_id": "hold1"
+        },
+        { "op": "set_now", "now": "2026-10-16T02:00:00+00:00" },
+        { "op": "settle", "hold_id": "hold1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "remaining": 600
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "grant", "amount": 1000 },
+            { "kind": "hold", "amount": 400 },
+            { "kind": "settle", "amount": 400 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "idempotent_grant_and_conflict",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1001,
+          "idempotency_key": "g1",
+          "lot_id": "lot1",
+          "expect": "conflict"
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [{ "kind": "grant", "amount": 1000, "lot_id": "lot1" }]
+        }
+      ]
+    },
+    {
+      "id": "idempotent_hold_and_terminal_replay",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "idempotency_key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 200,
+          "idempotency_key": "h1",
+          "hold_id": "hold1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 200,
+          "idempotency_key": "h1",
+          "hold_id": "hold1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 201,
+          "idempotency_key": "h1",
+          "hold_id": "hold1",
+          "expect": "conflict"
+        },
+        { "op": "settle", "hold_id": "hold1" },
+        { "op": "settle", "hold_id": "hold1" },
+        { "op": "release", "hold_id": "hold1", "expect": "hold_state" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 800,
+          "held": 0,
+          "remaining": 800
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "grant", "amount": 1000 },
+            { "kind": "hold", "amount": 200 },
+            { "kind": "settle", "amount": 200 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "org_owner_same_ledger",
+      "now": "2026-10-16T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "grant",
+          "owner_id": "org1",
+          "owner_kind": "org",
+          "amount": 50,
+          "source": "adjust",
+          "idempotency_key": "g-org",
+          "lot_id": "lot-org",
+          "ref": "ops-adjust"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "org1",
+          "owner_kind": "org",
+          "amount": 20,
+          "idempotency_key": "h-org",
+          "hold_id": "hold-org"
+        },
+        {
+          "op": "balance",
+          "owner_id": "org1",
+          "available": 30,
+          "held": 20,
+          "remaining": 50
+        }
+      ]
+    }
+  ]
+}

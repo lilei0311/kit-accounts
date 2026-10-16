@@ -1,0 +1,21 @@
+[project]
+name = "maxkit-identity"
+version = "0.1.0"
+description = "Minimal person, org, session, and external-identity connector primitives."
+requires-python = ">=3.11"
+dependencies = [
+  "maxkit-contracts>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/maxkit_identity"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
+[tool.uv.sources]
+maxkit-contracts = { workspace = true }
