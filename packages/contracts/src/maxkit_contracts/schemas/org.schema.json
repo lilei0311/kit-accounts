@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "maxkit://contracts/org.schema.json",
+  "title": "Org",
+  "description": "A tenant. Org freeze is an identity concern. The points engine does not read org status; the application checks it before spending.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "status", "created_at", "updated_at"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["active", "frozen"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

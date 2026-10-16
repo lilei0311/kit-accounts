@@ -1,0 +1,43 @@
+[project]
+name = "kit-py"
+version = "0.1.0"
+description = "MaxStorm private Python workspace for shared contracts, identity, and points."
+requires-python = ">=3.11"
+dependencies = [
+  "maxkit-contracts",
+  "maxkit-guard",
+  "maxkit-identity",
+  "maxkit-points",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+maxkit-contracts = { workspace = true }
+maxkit-guard = { workspace = true }
+maxkit-identity = { workspace = true }
+maxkit-points = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["packages", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["maxkit_contracts", "maxkit_guard", "maxkit_identity", "maxkit_points"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "tests"]

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "maxkit://contracts/person.schema.json",
+  "title": "Person",
+  "description": "A human account. Email may be absent when the person exists only through an external identity connector. status=frozen blocks new and existing sessions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "email",
+    "display_name",
+    "status",
+    "email_verified",
+    "org_ids",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "email": { "type": ["string", "null"], "format": "email" },
+    "display_name": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["active", "frozen"] },
+    "email_verified": { "type": "boolean" },
+    "org_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

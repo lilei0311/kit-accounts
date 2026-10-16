@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "maxkit://contracts/entry.schema.json",
+  "title": "Entry",
+  "description": "Append-only audit line. Lots are the balance source of truth. Entries explain grants, holds, settles, releases, and expiries. kind=adjust is reserved and is not emitted by the Phase 1 engine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "owner_id",
+    "lot_id",
+    "hold_id",
+    "kind",
+    "amount",
+    "created_at",
+    "ref",
+    "idempotency_key"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "owner_id": { "type": "string", "minLength": 1 },
+    "lot_id": { "type": ["string", "null"], "minLength": 1 },
+    "hold_id": { "type": ["string", "null"], "minLength": 1 },
+    "kind": { "enum": ["grant", "hold", "settle", "release", "expire", "adjust"] },
+    "amount": { "type": "integer", "minimum": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "ref": { "type": ["string", "null"], "minLength": 1 },
+    "idempotency_key": { "type": "string", "minLength": 1 }
+  }
+}

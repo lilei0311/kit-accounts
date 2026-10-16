@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: sync
+        run: uv sync --locked
+      - name: ruff
+        run: uv run ruff check .
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: pytest
+        run: uv run pytest
+      - name: import smoke
+        run: uv run python -c "import maxkit_identity, maxkit_points"
