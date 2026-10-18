@@ -1,5 +1,6 @@
-"""Error paths: every bad input exits 2 with a one-line message on stderr, no report."""
+"""Error paths: every bad input exits 2 with a `maxkit-s1-l1:` error line on stderr, no report."""
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -145,10 +146,13 @@ def test_subprocess_exit_codes_0_1_2(tmp_path):
         return subprocess.run([*cmd, *args, *extra], capture_output=True, text=True, check=False)
 
     assert run().returncode == 0
+    done = run(["--out", str(tmp_path / "bad_name.json")])
+    assert done.returncode == 1  # passing deliverable; only L1-07 fails, a check failure not usage
+    report = json.loads((tmp_path / "bad_name.json").read_text(encoding="utf-8"))
+    failed = [c["id"] for c in report["checks"] if c["result"] != "PASS"]
+    assert failed == ["L1-07"]
     (tmp_path / "deliverable.txt").write_text("Alpha one stays.\t\n", encoding="utf-8")
     assert run().returncode == 1
-    done = run(["--out", str(tmp_path / "bad_name.json")])
-    assert done.returncode == 1  # L1-07 fails, still a check failure not a usage error
     (tmp_path / "source.txt").unlink()
     done = run()
     assert done.returncode == 2

@@ -61,9 +61,7 @@ def test_template_b_contrast(name, exit_code, failed_ids, tmp_path, schema, fail
 def test_pass_and_fail_share_source_hash(tmp_path):
     base = FIXTURES / "pass_a"
     ok = _run(base, "source.txt", CONTRAST / "a" / "pass.txt", tmp_path / "ok.l1.json")
-    bad = _run(
-        base, "source.txt", CONTRAST / "a" / "fail_en_changed.txt", tmp_path / "bad.l1.json"
-    )
+    bad = _run(base, "source.txt", CONTRAST / "a" / "fail_en_changed.txt", tmp_path / "bad.l1.json")
     assert ok.report["source_hash"] == bad.report["source_hash"]
     assert ok.report["deliverable_hash"] != bad.report["deliverable_hash"]
     assert ok.report["failed_rows"] == []
