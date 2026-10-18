@@ -1,6 +1,6 @@
 # kit-py
 
-MaxStorm 私有 Python monorepo。Phase 1–2 只放可 import 的积木：契约、身份、积分，外加一个限流占位。不发布到 PyPI，不进公开仓。
+MaxStorm 私有 Python monorepo。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位，以及 S1 L1 格式检查。不发布到 PyPI，不进公开仓。
 
 ## 包边界
 
@@ -10,8 +10,19 @@ MaxStorm 私有 Python monorepo。Phase 1–2 只放可 import 的积木：契�
 | `maxkit-identity` | `maxkit_identity` | Person、Org、验证码、Session、外部身份连接器口 | `maxkit-contracts` |
 | `maxkit-points` | `maxkit_points` | 消费轨 lot + 带符号 entry + hold | `maxkit-contracts` |
 | `maxkit-guard` | `maxkit_guard` | 进程内固定窗口限流占位 | 无 |
+| `maxkit-s1` | `maxkit_s1` | S1 L1 英→中旁白格式契约检查（预设 A/B） | `pyyaml` |
 
-依赖方向是 contracts ← identity、contracts ← points。identity 与 points **互不 import**。积分引擎里的 `owner_id` 是不透明字符串；应用先用 identity 解析出 Person 或 Org，再把 id 交给 points。
+依赖方向是 contracts ← identity、contracts ← points。identity 与 points **互不 import**。`maxkit_s1` 不 import 其他 maxkit 包。积分引擎里的 `owner_id` 是不透明字符串；应用先用 identity 解析出 Person 或 Org，再把 id 交给 points。
+
+## S1 L1（英→中旁白格式）
+
+`maxkit-s1-l1` 做格式契约检查。预设 A 是纯文本，预设 B 是带 `en`/`zh` 列的 CSV（表头大小写不敏感）。契约是 YAML，或 Markdown 文件开头的 YAML frontmatter（`---`）。可选术语表 CSV 列：`term_en,term_zh,required`。
+
+```bash
+uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable bilingual.txt
+```
+
+预设 A 交付稿：每个非空行一条，写成 `en<TAB>zh` 或 `en || zh`。需要 idx、lock、note 时用 `idx<TAB>en<TAB>zh<TAB>lock<TAB>note`（`note` 里可写 `split_of=<idx>`，且契约要设 `allow_split: true`）。源稿的非空行是单元；`#` 开头、整行 `[[...]]`、全大写行默认 LOCK 为 `keep_en`（可用契约 `locks` 覆盖）。通过退出码 0，任一 L1-01..07 失败退出码 1，用法或读写错误退出码 2。报告默认写在交付稿旁边，文件名为 `<交付稿主名>.l1.json`。本 CLI 读 UTF-8 文本和 CSV。
 
 `maxkit_identity.IdentityService.require_person` 是应用层 `require_user` 的无框架核心。FastAPI 依赖包装留在各 app，不放进本仓。
 
@@ -74,7 +85,8 @@ uv sync
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
-uv run python -c "import maxkit_points, maxkit_identity"
+uv run python -c "import maxkit_points, maxkit_identity, maxkit_s1"
+uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable bilingual.txt
 ```
 
 CI（`.github/workflows/ci.yml`）跑同一组命令，并使用已提交的 `uv.lock`。
