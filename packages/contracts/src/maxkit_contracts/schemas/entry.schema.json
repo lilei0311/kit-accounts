@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "maxkit://contracts/entry.schema.json",
   "title": "Entry",
-  "description": "Append-only audit line. Lots are the balance source of truth. Entries explain grants, holds, settles, releases, and expiries. kind=adjust is reserved and is not emitted by the Phase 1 engine.",
+  "description": "Append-only signed line. Positive deltas open lots. task_hold is negative and matches the opened decrement. task_release is positive. expiry is negative when it burns opened, or zero when a held slice expires on release. task_settlement is zero on consume settle. A positive task_settlement records an earned grant; the contest-track winner payout is not emitted by the consume-track engine.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,20 +11,33 @@
     "lot_id",
     "hold_id",
     "kind",
-    "amount",
-    "created_at",
-    "ref",
-    "idempotency_key"
+    "delta",
+    "at",
+    "key",
+    "lot_expires_at",
+    "ref"
   ],
   "properties": {
     "id": { "type": "string", "minLength": 1 },
     "owner_id": { "type": "string", "minLength": 1 },
-    "lot_id": { "type": ["string", "null"], "minLength": 1 },
+    "lot_id": { "type": "string", "minLength": 1 },
     "hold_id": { "type": ["string", "null"], "minLength": 1 },
-    "kind": { "enum": ["grant", "hold", "settle", "release", "expire", "adjust"] },
-    "amount": { "type": "integer", "minimum": 1 },
-    "created_at": { "type": "string", "format": "date-time" },
-    "ref": { "type": ["string", "null"], "minLength": 1 },
-    "idempotency_key": { "type": "string", "minLength": 1 }
+    "kind": {
+      "enum": [
+        "signup_grant",
+        "subscription_grant",
+        "daily_claim",
+        "task_hold",
+        "task_release",
+        "task_settlement",
+        "expiry",
+        "admin_adjustment"
+      ]
+    },
+    "delta": { "type": "integer" },
+    "at": { "type": "string", "format": "date-time" },
+    "key": { "type": "string", "minLength": 1 },
+    "lot_expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "ref": { "type": ["string", "null"], "minLength": 1 }
   }
 }

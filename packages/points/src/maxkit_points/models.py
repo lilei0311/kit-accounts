@@ -1,7 +1,10 @@
-"""Lot, entry, and hold records.
+"""Lot, entry, and hold records for the consume-track ledger.
 
-Lots are the balance source of truth. Entries are an append-only audit log.
-`source` records where a lot came from. It is not a second balance.
+``amount`` is the original grant. ``opened`` is what a new hold can still
+spend. A hold decrements ``opened`` immediately. ``source`` mirrors ``origin``;
+it is not a second balance.
+
+Entries are an append-only signed ledger. Lots can be rebuilt from them.
 """
 
 from __future__ import annotations
@@ -11,9 +14,42 @@ from datetime import datetime
 from typing import Literal
 
 OwnerKind = Literal["person", "org"]
-LotSource = Literal["grant", "purchase", "promo", "adjust"]
-EntryKind = Literal["grant", "hold", "settle", "release", "expire", "adjust"]
-HoldStatus = Literal["open", "settled", "released"]
+PointOrigin = Literal[
+    "signup_grant",
+    "subscription_grant",
+    "daily_claim",
+    "earned",
+    "admin_adjustment",
+]
+EntryKind = Literal[
+    "signup_grant",
+    "subscription_grant",
+    "daily_claim",
+    "task_hold",
+    "task_release",
+    "task_settlement",
+    "expiry",
+    "admin_adjustment",
+]
+HoldStatus = Literal["held", "released", "settled"]
+
+POINT_ORIGINS: tuple[PointOrigin, ...] = (
+    "signup_grant",
+    "subscription_grant",
+    "daily_claim",
+    "earned",
+    "admin_adjustment",
+)
+ENTRY_KINDS: tuple[EntryKind, ...] = (
+    "signup_grant",
+    "subscription_grant",
+    "daily_claim",
+    "task_hold",
+    "task_release",
+    "task_settlement",
+    "expiry",
+    "admin_adjustment",
+)
 
 
 def isoformat(value: datetime | None) -> str | None:
@@ -24,13 +60,30 @@ def isoformat(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
+def grant_entry_kind(origin: PointOrigin) -> EntryKind:
+    """Map a grant origin onto the entry vocabulary.
+
+    ``earned`` is recorded as ``task_settlement`` with a positive delta.
+    Consume settle uses the same kind with delta 0 and does not create a lot.
+    """
+
+    if origin == "earned":
+        return "task_settlement"
+    return origin
+
+
 @dataclass(frozen=True)
-class Allocation:
+class HoldSlice:
     lot_id: str
     amount: int
+    expires_at: datetime | None
 
     def to_dict(self) -> dict[str, object]:
-        return {"lot_id": self.lot_id, "amount": self.amount}
+        return {
+            "lot_id": self.lot_id,
+            "amount": self.amount,
+            "expires_at": isoformat(self.expires_at),
+        }
 
 
 @dataclass
@@ -38,42 +91,41 @@ class PointLot:
     id: str
     owner_id: str
     owner_kind: OwnerKind
-    source: LotSource
-    original_amount: int
-    remaining: int
-    reserved: int
+    origin: PointOrigin
+    source: PointOrigin
+    amount: int
+    opened: int
     expires_at: datetime | None
-    created_at: datetime
-    ref: str | None
-    idempotency_key: str
+    granted_at: datetime
+    grant_key: str
 
     def to_dict(self) -> dict[str, object]:
         return {
             "id": self.id,
             "owner_id": self.owner_id,
             "owner_kind": self.owner_kind,
+            "origin": self.origin,
             "source": self.source,
-            "original_amount": self.original_amount,
-            "remaining": self.remaining,
-            "reserved": self.reserved,
+            "amount": self.amount,
+            "opened": self.opened,
             "expires_at": isoformat(self.expires_at),
-            "created_at": isoformat(self.created_at),
-            "ref": self.ref,
-            "idempotency_key": self.idempotency_key,
+            "granted_at": isoformat(self.granted_at),
+            "grant_key": self.grant_key,
         }
 
 
-@dataclass
+@dataclass(frozen=True)
 class Entry:
     id: str
     owner_id: str
-    lot_id: str | None
+    lot_id: str
     hold_id: str | None
     kind: EntryKind
-    amount: int
-    created_at: datetime
+    delta: int
+    at: datetime
+    key: str
+    lot_expires_at: datetime | None
     ref: str | None
-    idempotency_key: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -82,10 +134,11 @@ class Entry:
             "lot_id": self.lot_id,
             "hold_id": self.hold_id,
             "kind": self.kind,
-            "amount": self.amount,
-            "created_at": isoformat(self.created_at),
+            "delta": self.delta,
+            "at": isoformat(self.at),
+            "key": self.key,
+            "lot_expires_at": isoformat(self.lot_expires_at),
             "ref": self.ref,
-            "idempotency_key": self.idempotency_key,
         }
 
 
@@ -96,9 +149,9 @@ class Hold:
     owner_kind: OwnerKind
     amount: int
     status: HoldStatus
-    allocations: list[Allocation]
+    slices: list[HoldSlice]
     ref: str | None
-    idempotency_key: str
+    key: str
     created_at: datetime
     updated_at: datetime
 
@@ -109,9 +162,9 @@ class Hold:
             "owner_kind": self.owner_kind,
             "amount": self.amount,
             "status": self.status,
-            "allocations": [item.to_dict() for item in self.allocations],
+            "slices": [item.to_dict() for item in self.slices],
             "ref": self.ref,
-            "idempotency_key": self.idempotency_key,
+            "key": self.key,
             "created_at": isoformat(self.created_at),
             "updated_at": isoformat(self.updated_at),
         }
@@ -121,15 +174,16 @@ class Hold:
 class Balance:
     """Single balance for one owner.
 
-    `available` is what a new hold can reserve. `held` is open reservations.
-    `remaining` is the sum of lot.remaining, including expired points not yet swept
-    by `expire_due`. After a sweep, available + held == remaining.
+    ``available`` sums ``opened`` on lots that have not expired.
+    ``held`` sums holds still in status ``held``.
+    ``opened`` sums ``lot.opened``, including expired points not yet swept.
+    Held points are already absent from ``opened``.
     """
 
     owner_id: str
     available: int
     held: int
-    remaining: int
+    opened: int
 
 
 @dataclass(frozen=True)

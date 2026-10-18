@@ -2,33 +2,35 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "maxkit://contracts/point_lot.schema.json",
   "title": "PointLot",
-  "description": "One grant of points. source is provenance only. Balances are never split into paid and free buckets. Spendable points are remaining minus reserved, ignoring expired unreserved points.",
+  "description": "One grant on the consume-track ledger. amount is the original grant and does not shrink when points are held. opened is the spendable remainder; a hold decrements it immediately. origin and source are the same provenance value, not a paid bucket and a free bucket. Expired lots stay out of available even if opened has not been swept yet.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "id",
     "owner_id",
     "owner_kind",
+    "origin",
     "source",
-    "original_amount",
-    "remaining",
-    "reserved",
+    "amount",
+    "opened",
     "expires_at",
-    "created_at",
-    "ref",
-    "idempotency_key"
+    "granted_at",
+    "grant_key"
   ],
   "properties": {
     "id": { "type": "string", "minLength": 1 },
     "owner_id": { "type": "string", "minLength": 1 },
     "owner_kind": { "enum": ["person", "org"] },
-    "source": { "enum": ["grant", "purchase", "promo", "adjust"] },
-    "original_amount": { "type": "integer", "minimum": 1 },
-    "remaining": { "type": "integer", "minimum": 0 },
-    "reserved": { "type": "integer", "minimum": 0 },
+    "origin": {
+      "enum": ["signup_grant", "subscription_grant", "daily_claim", "earned", "admin_adjustment"]
+    },
+    "source": {
+      "enum": ["signup_grant", "subscription_grant", "daily_claim", "earned", "admin_adjustment"]
+    },
+    "amount": { "type": "integer", "minimum": 1 },
+    "opened": { "type": "integer", "minimum": 0 },
     "expires_at": { "type": ["string", "null"], "format": "date-time" },
-    "created_at": { "type": "string", "format": "date-time" },
-    "ref": { "type": ["string", "null"], "minLength": 1 },
-    "idempotency_key": { "type": "string", "minLength": 1 }
+    "granted_at": { "type": "string", "format": "date-time" },
+    "grant_key": { "type": "string", "minLength": 1 }
   }
 }

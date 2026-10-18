@@ -1,21 +1,25 @@
-"""Lot + entry + hold engine.
+"""Consume-track points engine.
 
-There is one available balance per owner. Lot `source` (grant, purchase, promo, adjust)
-is provenance for an audit, not a paid bucket and a free bucket.
+One available balance per owner. Lot ``origin`` / ``source`` record where the
+grant came from. They are not a paid bucket and a free bucket. ``paid_only``
+is an optional filter (story-clip B-tier) over ``PAID_TIER_ORIGINS``.
 
-Allocation order is soonest `expires_at` first, then `created_at`, then id.
-Lots with no expiry are spent last. An open hold keeps its points through expiry:
-settle still consumes them, release does not put them back into available.
+Hold decrements ``opened`` and writes a negative ``task_hold``. Release adds
+``opened`` back for slices that have not expired; an expired slice gets a
+zero-delta ``expiry`` audit and is not restored. ``apply_consume_settle``
+marks the hold settled and writes a zero-delta ``task_settlement`` per slice.
+It does not restore ``opened`` and it does not grant points to a winner.
 
-Product SKU prices stay in the application. Pass the price as `amount` and the sku
-as `ref` if you need it on the audit line.
+Yangong ``applySettle`` (contest track: grant ``earned`` to the winner) is
+intentionally absent. Subscription calendars and product SKU prices stay in
+the application. Pass the point amount in, and put an external id in ``ref``
+when the audit line needs it.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -28,24 +32,24 @@ from maxkit_points.errors import (
     NotFound,
     PointsError,
 )
+from maxkit_points.ledger import fefo, lot_signature, rebuild_lots, sum_available
 from maxkit_points.models import (
-    Allocation,
+    POINT_ORIGINS,
     Balance,
     Entry,
     EntryKind,
     Hold,
-    HoldStatus,
+    HoldSlice,
     IdempotencyRecord,
-    LotSource,
     OwnerKind,
     PointLot,
+    PointOrigin,
+    grant_entry_kind,
     isoformat,
 )
 from maxkit_points.store import MemoryPointsStore, PointsStore
 
 _OWNER_KINDS = ("person", "org")
-_SOURCES = ("grant", "purchase", "promo", "adjust")
-_NO_EXPIRY = datetime(9999, 12, 31, tzinfo=UTC)
 
 
 class PointsEngine:
@@ -57,23 +61,25 @@ class PointsEngine:
         self._store = store or MemoryPointsStore()
         self._clock = clock or (lambda: datetime.now(UTC))
 
-    def grant(
+    def apply_grant(
         self,
         *,
         owner_id: str,
         amount: int,
-        idempotency_key: str,
+        key: str,
+        origin: PointOrigin = "signup_grant",
         owner_kind: OwnerKind = "person",
-        source: LotSource = "grant",
         lot_id: str | None = None,
         expires_at: datetime | None = None,
         ref: str | None = None,
     ) -> PointLot:
+        """Open a lot. ``key`` is the idempotency key stored as ``grant_key``."""
+
         owner = _require_text(owner_id, "owner_id")
-        key = _require_text(idempotency_key, "idempotency_key")
+        grant_key = _require_text(key, "key")
         _require_amount(amount)
         _require_owner_kind(owner_kind)
-        _require_source(source)
+        _require_origin(origin)
         external_ref = _optional_text(ref, "ref")
         expires = _require_aware(expires_at, "expires_at")
         supplied_lot_id = _optional_text(lot_id, "lot_id") if lot_id is not None else None
@@ -82,17 +88,17 @@ class PointsEngine:
                 "owner_id": owner,
                 "owner_kind": owner_kind,
                 "amount": amount,
-                "source": source,
+                "origin": origin,
                 "ref": external_ref,
                 "expires_at": isoformat(expires),
                 "lot_id": supplied_lot_id,
             }
         )
         with self._store.transaction():
-            replay = self._replay("grant", key, payload)
+            replay = self._replay("grant", grant_key, payload)
             if replay is not None:
                 return self._must_lot(replay)
-            chosen_id = supplied_lot_id or _new_id("lot")
+            chosen_id = supplied_lot_id or self._store.next_id("lot")
             self._assert_owner_kind(owner, owner_kind)
             if self._store.get_lot(chosen_id) is not None:
                 raise InvalidPointsArgument(f"lot id already exists: {chosen_id}")
@@ -101,32 +107,36 @@ class PointsEngine:
                 id=chosen_id,
                 owner_id=owner,
                 owner_kind=owner_kind,
-                source=source,
-                original_amount=amount,
-                remaining=amount,
-                reserved=0,
+                origin=origin,
+                source=origin,
+                amount=amount,
+                opened=amount,
                 expires_at=expires,
-                created_at=now,
-                ref=external_ref,
-                idempotency_key=key,
+                granted_at=now,
+                grant_key=grant_key,
             )
-            self._check_lot_invariant(lot)
+            self._check_lot(lot)
             validate("point_lot", lot.to_dict())
             entry = self._build_entry(
                 owner_id=owner,
                 lot_id=lot.id,
                 hold_id=None,
-                kind="grant",
-                amount=amount,
+                kind=grant_entry_kind(origin),
+                delta=amount,
                 ref=external_ref,
-                idempotency_key=key,
+                key=grant_key,
+                lot_expires_at=expires,
                 now=now,
             )
-            validate("entry", entry.to_dict())
+            self._commit_entry(entry)
             self._store.save_lot(lot)
-            self._store.append_entry(entry)
             self._store.put_idempotency(
-                IdempotencyRecord(key=key, scope="grant", payload_hash=payload, target_id=lot.id)
+                IdempotencyRecord(
+                    key=grant_key,
+                    scope="grant",
+                    payload_hash=payload,
+                    target_id=lot.id,
+                )
             )
             return lot
 
@@ -135,15 +145,25 @@ class PointsEngine:
         *,
         owner_id: str,
         amount: int,
-        idempotency_key: str,
+        key: str,
         owner_kind: OwnerKind = "person",
         hold_id: str | None = None,
         ref: str | None = None,
+        paid_only: bool = False,
     ) -> Hold:
+        """Reserve points FEFO. Decrements ``opened`` now. Whole hold or nothing.
+
+        Expired ``opened`` on this owner is swept first, including when the
+        hold then fails for insufficient points. Replay of ``key`` returns the
+        existing hold and does not sweep again.
+        """
+
         owner = _require_text(owner_id, "owner_id")
-        key = _require_text(idempotency_key, "idempotency_key")
+        hold_key = _require_text(key, "key")
         _require_amount(amount)
         _require_owner_kind(owner_kind)
+        if not isinstance(paid_only, bool):
+            raise InvalidPointsArgument("paid_only must be a bool")
         external_ref = _optional_text(ref, "ref")
         supplied_hold_id = _optional_text(hold_id, "hold_id") if hold_id is not None else None
         payload = _payload_hash(
@@ -153,103 +173,221 @@ class PointsEngine:
                 "amount": amount,
                 "ref": external_ref,
                 "hold_id": supplied_hold_id,
+                "paid_only": paid_only,
             }
         )
         with self._store.transaction():
-            replay = self._replay("hold", key, payload)
+            replay = self._replay("hold", hold_key, payload)
             if replay is not None:
                 return self._must_hold(replay)
-            chosen_id = supplied_hold_id or _new_id("hold")
-            now = self._now()
+            if supplied_hold_id is not None and self._store.get_hold(supplied_hold_id) is not None:
+                raise InvalidPointsArgument(f"hold id already exists: {supplied_hold_id}")
             self._assert_owner_kind(owner, owner_kind)
+            now = self._now()
+            self._sweep(owner, now)
+            slices = self._plan(owner, amount, now, paid_only=paid_only)
+            chosen_id = supplied_hold_id or self._store.next_id("hold")
             if self._store.get_hold(chosen_id) is not None:
                 raise InvalidPointsArgument(f"hold id already exists: {chosen_id}")
-            allocations = self._plan_allocations(owner, amount, now)
             hold = Hold(
                 id=chosen_id,
                 owner_id=owner,
                 owner_kind=owner_kind,
                 amount=amount,
-                status="open",
-                allocations=allocations,
+                status="held",
+                slices=slices,
                 ref=external_ref,
-                idempotency_key=key,
+                key=hold_key,
                 created_at=now,
                 updated_at=now,
             )
             validate("hold", hold.to_dict())
-            staged_lots: list[PointLot] = []
-            entries: list[Entry] = []
-            for allocation in allocations:
-                lot = self._must_lot(allocation.lot_id)
-                lot.reserved += allocation.amount
-                self._check_lot_invariant(lot)
+            staged: list[tuple[PointLot, Entry]] = []
+            for slice_ in slices:
+                lot = self._must_lot(slice_.lot_id)
+                lot.opened -= slice_.amount
+                self._check_lot(lot)
                 validate("point_lot", lot.to_dict())
                 entry = self._build_entry(
                     owner_id=owner,
                     lot_id=lot.id,
                     hold_id=hold.id,
-                    kind="hold",
-                    amount=allocation.amount,
+                    kind="task_hold",
+                    delta=-slice_.amount,
                     ref=external_ref,
-                    idempotency_key=key,
+                    key=f"{hold_key}:{lot.id}",
+                    lot_expires_at=slice_.expires_at,
                     now=now,
                 )
-                validate("entry", entry.to_dict())
-                staged_lots.append(lot)
-                entries.append(entry)
-            for lot in staged_lots:
+                staged.append((lot, entry))
+            for lot, entry in staged:
                 self._store.save_lot(lot)
-            for entry in entries:
-                self._store.append_entry(entry)
+                self._commit_entry(entry)
             self._store.save_hold(hold)
             self._store.put_idempotency(
-                IdempotencyRecord(key=key, scope="hold", payload_hash=payload, target_id=hold.id)
+                IdempotencyRecord(
+                    key=hold_key,
+                    scope="hold",
+                    payload_hash=payload,
+                    target_id=hold.id,
+                )
             )
             return hold
 
-    def settle(self, hold_id: str) -> Hold:
-        return self._close_hold(_require_text(hold_id, "hold_id"), "settled")
+    def apply_release(self, hold_id: str) -> Hold:
+        """Return ``opened`` for slices still inside their expiry.
 
-    def release(self, hold_id: str) -> Hold:
-        return self._close_hold(_require_text(hold_id, "hold_id"), "released")
+        An expired slice is a zero-delta ``expiry`` line. The held points are
+        not put back, and the unheld remainder of the lot is left for
+        ``apply_expiry``.
+        """
 
-    def expire_due(self, *, owner_id: str | None = None) -> list[Entry]:
-        owner = _optional_text(owner_id, "owner_id") if owner_id is not None else None
+        target_id = _require_text(hold_id, "hold_id")
         with self._store.transaction():
+            hold = self._must_hold(target_id)
+            if hold.status == "released":
+                return hold
+            if hold.status != "held":
+                raise HoldStateError(hold.id, hold.status, "release")
             now = self._now()
-            lots = self._store.all_lots() if owner is None else self._store.lots_for_owner(owner)
-            lots.sort(key=lambda lot: (_expiry_key(lot), lot.created_at, lot.id))
-            written: list[Entry] = []
-            for lot in lots:
-                if not _is_expired(lot, now):
+            for slice_ in hold.slices:
+                entry_key = f"release:{hold.id}:{slice_.lot_id}"
+                if self._store.get_entry_by_key(entry_key) is not None:
                     continue
-                burn = lot.remaining - lot.reserved
-                if burn <= 0:
+                expired = slice_.expires_at is not None and slice_.expires_at <= now
+                if expired:
+                    entry = self._build_entry(
+                        owner_id=hold.owner_id,
+                        lot_id=slice_.lot_id,
+                        hold_id=hold.id,
+                        kind="expiry",
+                        delta=0,
+                        ref=hold.ref,
+                        key=entry_key,
+                        lot_expires_at=slice_.expires_at,
+                        now=now,
+                    )
+                    self._commit_entry(entry)
                     continue
-                lot.remaining = lot.reserved
-                self._check_lot_invariant(lot)
+                lot = self._must_lot(slice_.lot_id)
+                lot.opened += slice_.amount
+                self._check_lot(lot)
+                validate("point_lot", lot.to_dict())
                 entry = self._build_entry(
-                    owner_id=lot.owner_id,
-                    lot_id=lot.id,
-                    hold_id=None,
-                    kind="expire",
-                    amount=burn,
-                    ref=lot.ref,
-                    idempotency_key=f"expire:{lot.id}:{isoformat(now)}",
+                    owner_id=hold.owner_id,
+                    lot_id=slice_.lot_id,
+                    hold_id=hold.id,
+                    kind="task_release",
+                    delta=slice_.amount,
+                    ref=hold.ref,
+                    key=entry_key,
+                    lot_expires_at=slice_.expires_at,
                     now=now,
                 )
-                validate("point_lot", lot.to_dict())
-                validate("entry", entry.to_dict())
                 self._store.save_lot(lot)
-                self._store.append_entry(entry)
-                written.append(entry)
-            return written
+                self._commit_entry(entry)
+            hold.status = "released"
+            hold.updated_at = now
+            validate("hold", hold.to_dict())
+            self._store.save_hold(hold)
+            return hold
+
+    def apply_consume_settle(self, hold_id: str) -> Hold:
+        """Close a hold as consumed.
+
+        Writes one zero-delta ``task_settlement`` per slice. ``opened`` stays
+        where the hold left it. No winner lot is created.
+        """
+
+        target_id = _require_text(hold_id, "hold_id")
+        with self._store.transaction():
+            hold = self._must_hold(target_id)
+            if hold.status == "settled":
+                return hold
+            if hold.status != "held":
+                raise HoldStateError(hold.id, hold.status, "consume_settle")
+            now = self._now()
+            for slice_ in hold.slices:
+                entry_key = f"settle:{hold.id}:{slice_.lot_id}"
+                if self._store.get_entry_by_key(entry_key) is not None:
+                    continue
+                entry = self._build_entry(
+                    owner_id=hold.owner_id,
+                    lot_id=slice_.lot_id,
+                    hold_id=hold.id,
+                    kind="task_settlement",
+                    delta=0,
+                    ref=hold.ref,
+                    key=entry_key,
+                    lot_expires_at=slice_.expires_at,
+                    now=now,
+                )
+                self._commit_entry(entry)
+            hold.status = "settled"
+            hold.updated_at = now
+            validate("hold", hold.to_dict())
+            self._store.save_hold(hold)
+            return hold
+
+    def apply_expiry(self, *, owner_id: str | None = None) -> list[Entry]:
+        """Burn ``opened`` on lots whose ``expires_at`` is at or before now.
+
+        Held points were already removed from ``opened``, so they are not
+        burned here. Replaying the sweep does not write a second line.
+        """
+
+        owner = _optional_text(owner_id, "owner_id") if owner_id is not None else None
+        with self._store.transaction():
+            return self._sweep(owner, self._now())
+
+    def available(self, owner_id: str, *, paid_only: bool = False) -> int:
+        owner = _require_text(owner_id, "owner_id")
+        if not isinstance(paid_only, bool):
+            raise InvalidPointsArgument("paid_only must be a bool")
+        with self._store.transaction():
+            return sum_available(
+                self._store.lots_for_owner(owner),
+                self._now(),
+                paid_only=paid_only,
+            )
+
+    def held_amount(self, owner_id: str) -> int:
+        owner = _require_text(owner_id, "owner_id")
+        with self._store.transaction():
+            return self._held_locked(owner)
 
     def balance(self, owner_id: str) -> Balance:
         owner = _require_text(owner_id, "owner_id")
         with self._store.transaction():
-            return self._balance_locked(owner)
+            lots = self._store.lots_for_owner(owner)
+            now = self._now()
+            return Balance(
+                owner_id=owner,
+                available=sum_available(lots, now, paid_only=False),
+                held=self._held_locked(owner),
+                opened=sum(lot.opened for lot in lots),
+            )
+
+    def balances_match_ledger(self, owner_id: str) -> bool:
+        """True when live lots match ``rebuild_lots`` and available agrees.
+
+        Held amounts live on the hold rows. They are not a second copy of
+        ``opened``.
+        """
+
+        owner = _require_text(owner_id, "owner_id")
+        with self._store.transaction():
+            live = self._store.lots_for_owner(owner)
+            kind: OwnerKind = live[0].owner_kind if live else "person"
+            rebuilt = rebuild_lots(self._store.entries_for_owner(owner), owner_kind=kind)
+            now = self._now()
+            live_sig = sorted(lot_signature(lot) for lot in live)
+            rebuilt_sig = sorted(lot_signature(lot) for lot in rebuilt)
+            if live_sig != rebuilt_sig:
+                return False
+            return sum_available(live, now, paid_only=False) == sum_available(
+                rebuilt, now, paid_only=False
+            )
 
     def entries(self, owner_id: str) -> list[Entry]:
         owner = _require_text(owner_id, "owner_id")
@@ -264,98 +402,72 @@ class PointsEngine:
         with self._store.transaction():
             return self._must_hold(_require_text(hold_id, "hold_id"))
 
-    def _close_hold(self, hold_id: str, target: HoldStatus) -> Hold:
-        action = "settle" if target == "settled" else "release"
-        with self._store.transaction():
-            hold = self._must_hold(hold_id)
-            if hold.status == target:
-                return hold
-            if hold.status != "open":
-                raise HoldStateError(hold.id, hold.status, action)
-            now = self._now()
-            for allocation in hold.allocations:
-                lot = self._must_lot(allocation.lot_id)
-                if lot.reserved < allocation.amount or lot.remaining < allocation.amount:
-                    raise PointsError(f"lot reservation corrupt: {lot.id}")
-                lot.reserved -= allocation.amount
-                if target == "settled":
-                    lot.remaining -= allocation.amount
-                    entry_kind = "settle"
-                    entry_key = f"settle:{hold.id}"
-                else:
-                    entry_kind = "release"
-                    entry_key = f"release:{hold.id}"
-                self._check_lot_invariant(lot)
-                entry = self._build_entry(
-                    owner_id=hold.owner_id,
-                    lot_id=lot.id,
-                    hold_id=hold.id,
-                    kind=entry_kind,
-                    amount=allocation.amount,
-                    ref=hold.ref,
-                    idempotency_key=entry_key,
-                    now=now,
-                )
-                validate("entry", entry.to_dict())
-                self._store.append_entry(entry)
-                if target == "released" and _is_expired(lot, now):
-                    lot.remaining -= allocation.amount
-                    self._check_lot_invariant(lot)
-                    expired = self._build_entry(
-                        owner_id=hold.owner_id,
-                        lot_id=lot.id,
-                        hold_id=hold.id,
-                        kind="expire",
-                        amount=allocation.amount,
-                        ref=hold.ref,
-                        idempotency_key=f"expire:{hold.id}:{lot.id}",
-                        now=now,
-                    )
-                    validate("entry", expired.to_dict())
-                    self._store.append_entry(expired)
-                validate("point_lot", lot.to_dict())
-                self._store.save_lot(lot)
-            hold.status = target
-            hold.updated_at = now
-            validate("hold", hold.to_dict())
-            self._store.save_hold(hold)
-            return hold
-
-    def _plan_allocations(self, owner_id: str, amount: int, now: datetime) -> list[Allocation]:
-        lots = [lot for lot in self._store.lots_for_owner(owner_id) if _spendable(lot, now) > 0]
-        lots.sort(key=lambda lot: (_expiry_key(lot), lot.created_at, lot.id))
-        available = sum(_spendable(lot, now) for lot in lots)
-        if available < amount:
-            raise InsufficientPoints(owner_id, amount, available)
+    def _plan(
+        self,
+        owner_id: str,
+        amount: int,
+        now: datetime,
+        *,
+        paid_only: bool,
+    ) -> list[HoldSlice]:
+        lots = fefo(self._store.lots_for_owner(owner_id), now, paid_only=paid_only)
+        spendable = sum(lot.opened for lot in lots)
+        if spendable < amount:
+            raise InsufficientPoints(owner_id, amount, spendable)
         needed = amount
-        allocations: list[Allocation] = []
+        slices: list[HoldSlice] = []
         for lot in lots:
-            take = min(_spendable(lot, now), needed)
+            take = min(lot.opened, needed)
             if take <= 0:
                 continue
-            allocations.append(Allocation(lot_id=lot.id, amount=take))
+            slices.append(HoldSlice(lot_id=lot.id, amount=take, expires_at=lot.expires_at))
             needed -= take
             if needed == 0:
                 break
-        if needed != 0 or not allocations:
+        if needed != 0 or not slices:
             raise PointsError("allocation planning failed")
-        return allocations
+        return slices
 
-    def _balance_locked(self, owner_id: str) -> Balance:
-        now = self._now()
-        lots = self._store.lots_for_owner(owner_id)
-        holds = self._store.holds_for_owner(owner_id)
-        reserved = sum(lot.reserved for lot in lots)
-        held = sum(hold.amount for hold in holds if hold.status == "open")
-        if reserved != held:
-            raise PointsError(f"reserved does not match open holds for {owner_id}")
-        available = sum(_spendable(lot, now) for lot in lots)
-        remaining = sum(lot.remaining for lot in lots)
-        return Balance(
-            owner_id=owner_id,
-            available=available,
-            held=held,
-            remaining=remaining,
+    def _sweep(self, owner_id: str | None, now: datetime) -> list[Entry]:
+        lots = self._store.all_lots() if owner_id is None else self._store.lots_for_owner(owner_id)
+        lots.sort(
+            key=lambda lot: (
+                lot.expires_at is None,
+                lot.expires_at or now,
+                lot.granted_at,
+                lot.id,
+            )
+        )
+        written: list[Entry] = []
+        for lot in lots:
+            if lot.expires_at is None or lot.expires_at > now or lot.opened <= 0:
+                continue
+            entry_key = f"expiry:{lot.id}:{isoformat(lot.expires_at)}"
+            if self._store.get_entry_by_key(entry_key) is not None:
+                raise PointsError(f"expiry already recorded while opened remains: {lot.id}")
+            delta = -lot.opened
+            entry = self._build_entry(
+                owner_id=lot.owner_id,
+                lot_id=lot.id,
+                hold_id=None,
+                kind="expiry",
+                delta=delta,
+                ref=None,
+                key=entry_key,
+                lot_expires_at=lot.expires_at,
+                now=now,
+            )
+            lot.opened = 0
+            self._check_lot(lot)
+            validate("point_lot", lot.to_dict())
+            self._store.save_lot(lot)
+            self._commit_entry(entry)
+            written.append(entry)
+        return written
+
+    def _held_locked(self, owner_id: str) -> int:
+        return sum(
+            hold.amount for hold in self._store.holds_for_owner(owner_id) if hold.status == "held"
         )
 
     def _replay(self, scope: str, key: str, payload: str) -> str | None:
@@ -378,25 +490,33 @@ class PointsEngine:
         self,
         *,
         owner_id: str,
-        lot_id: str | None,
+        lot_id: str,
         hold_id: str | None,
         kind: EntryKind,
-        amount: int,
+        delta: int,
         ref: str | None,
-        idempotency_key: str,
+        key: str,
+        lot_expires_at: datetime | None,
         now: datetime,
     ) -> Entry:
         return Entry(
-            id=_new_id("ent"),
+            id=self._store.next_id("ent"),
             owner_id=owner_id,
             lot_id=lot_id,
             hold_id=hold_id,
             kind=kind,
-            amount=amount,
-            created_at=now,
+            delta=delta,
+            at=now,
+            key=key,
+            lot_expires_at=lot_expires_at,
             ref=ref,
-            idempotency_key=idempotency_key,
         )
+
+    def _commit_entry(self, entry: Entry) -> None:
+        if self._store.get_entry_by_key(entry.key) is not None:
+            raise PointsError(f"duplicate entry key: {entry.key}")
+        validate("entry", entry.to_dict())
+        self._store.append_entry(entry)
 
     def _must_lot(self, lot_id: str) -> PointLot:
         lot = self._store.get_lot(lot_id)
@@ -410,8 +530,10 @@ class PointsEngine:
             raise NotFound("hold", hold_id)
         return hold
 
-    def _check_lot_invariant(self, lot: PointLot) -> None:
-        if not (0 <= lot.reserved <= lot.remaining <= lot.original_amount):
+    def _check_lot(self, lot: PointLot) -> None:
+        if lot.source != lot.origin:
+            raise PointsError(f"lot source must mirror origin: {lot.id}")
+        if lot.amount < 1 or not (0 <= lot.opened <= lot.amount):
             raise PointsError(f"lot invariant failed: {lot.id}")
 
     def _now(self) -> datetime:
@@ -419,19 +541,6 @@ class PointsEngine:
         if current.tzinfo is None or current.utcoffset() is None:
             raise InvalidPointsArgument("clock must return a timezone-aware datetime")
         return current
-
-
-def _spendable(lot: PointLot, now: datetime) -> int:
-    active = lot.reserved if _is_expired(lot, now) else lot.remaining
-    return active - lot.reserved
-
-
-def _is_expired(lot: PointLot, now: datetime) -> bool:
-    return lot.expires_at is not None and lot.expires_at <= now
-
-
-def _expiry_key(lot: PointLot) -> datetime:
-    return lot.expires_at if lot.expires_at is not None else _NO_EXPIRY
 
 
 def _require_amount(amount: object) -> None:
@@ -444,9 +553,12 @@ def _require_owner_kind(owner_kind: str) -> None:
         raise InvalidPointsArgument("owner_kind must be person or org")
 
 
-def _require_source(source: str) -> None:
-    if source not in _SOURCES:
-        raise InvalidPointsArgument("source must be grant, purchase, promo, or adjust")
+def _require_origin(origin: str) -> None:
+    if origin not in POINT_ORIGINS:
+        raise InvalidPointsArgument(
+            "origin must be signup_grant, subscription_grant, daily_claim, earned, "
+            "or admin_adjustment"
+        )
 
 
 def _require_text(value: str, field: str) -> str:
@@ -476,7 +588,3 @@ def _require_aware(value: datetime | None, field: str) -> datetime | None:
 def _payload_hash(payload: dict[str, object]) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()
-
-
-def _new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex}"

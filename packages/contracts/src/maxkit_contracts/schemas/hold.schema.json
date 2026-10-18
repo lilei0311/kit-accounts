@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "maxkit://contracts/hold.schema.json",
   "title": "Hold",
-  "description": "A reservation against lot remaining. open holds reduce available points. settle consumes them. release returns them unless the lot has already expired.",
+  "description": "A consume-track reservation. status is held, released, or settled. Creating the hold already reduced lot.opened. Release restores opened only for slices that have not expired. Consume settle marks the hold settled and does not restore opened and does not pay a winner.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,9 +11,9 @@
     "owner_kind",
     "amount",
     "status",
-    "allocations",
+    "slices",
     "ref",
-    "idempotency_key",
+    "key",
     "created_at",
     "updated_at"
   ],
@@ -22,22 +22,23 @@
     "owner_id": { "type": "string", "minLength": 1 },
     "owner_kind": { "enum": ["person", "org"] },
     "amount": { "type": "integer", "minimum": 1 },
-    "status": { "enum": ["open", "settled", "released"] },
-    "allocations": {
+    "status": { "enum": ["held", "released", "settled"] },
+    "slices": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["lot_id", "amount"],
+        "required": ["lot_id", "amount", "expires_at"],
         "properties": {
           "lot_id": { "type": "string", "minLength": 1 },
-          "amount": { "type": "integer", "minimum": 1 }
+          "amount": { "type": "integer", "minimum": 1 },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" }
         }
       }
     },
     "ref": { "type": ["string", "null"], "minLength": 1 },
-    "idempotency_key": { "type": "string", "minLength": 1 },
+    "key": { "type": "string", "minLength": 1 },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" }
   }

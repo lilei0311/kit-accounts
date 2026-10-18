@@ -1,7 +1,7 @@
 [project]
 name = "maxkit-points"
 version = "0.1.0"
-description = "Single-balance points engine: lot, append-only entry, and hold."
+description = "Consume-track points ledger: opened balance, signed entries, hold, release, consume settle."
 requires-python = ">=3.11"
 dependencies = [
   "maxkit-contracts>=0.1.0",

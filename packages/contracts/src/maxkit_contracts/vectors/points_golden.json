@@ -1,224 +1,660 @@
 {
-  "version": 1,
-  "provenance": "kit-py stand-in for Phase 1. Locked to the 2026-10-16 req card: one lot+entry+hold ledger, single available balance, no paid/free buckets. Not copied from yangong points*.test.ts; that private tree was unreadable here. Product SKU amounts appear only as external ref strings.",
+  "version": 2,
+  "track": "consume",
+  "provenance": "Consume-track golden vectors for kit-py. Derived from yangong points.test.ts cases that exercise grant, hold, release, expiry, FEFO, idempotency, and insufficient balance, plus app-story-clip consume settle (hold marked settled, zero-delta task_settlement audit, opened not restored, no winner grant). Lot figures that yangong stores by shrinking amount are opened here; amount stays the original grant. Contest-track payouts are listed under excluded and are not executed. Subscription calendars and mixed-org tenancy stay out of the engine. Alignment notes: kit-py-golden-gap-2026-10-18. Product SKU prices are not part of these vectors.",
+  "excluded": [
+    {
+      "id": "yangong_1_contest_payout",
+      "track": "contest",
+      "reason": "yangong points.test.ts case 1 applySettle grants earned to another person. Consume settle keeps the spender's opened where the hold left it."
+    },
+    {
+      "id": "yangong_2_runner_up",
+      "track": "contest",
+      "reason": "yangong points.test.ts case 2 substitutes the paid person. Contest settlement only."
+    },
+    {
+      "id": "yangong_7_earned_lot_for_payee",
+      "track": "contest",
+      "reason": "yangong points.test.ts case 7 opens a null-expiry earned lot for the payee. Not a consume settle."
+    },
+    {
+      "id": "yangong_10_contest_replay",
+      "track": "contest",
+      "reason": "yangong points.test.ts case 10 replays a contest payout. Consume-settle replay is yangong_10_consume_settle_replay."
+    }
+  ],
+  "out_of_scope": [
+    "yangong points.test.ts cases 8-9: subscription renewal and daily-claim schedule are product policy, not the ledger.",
+    "yangong points.test.ts case 54: mixed-org tenancy. kit-py isolates balances by owner_id; org membership stays in identity."
+  ],
   "cases": [
     {
-      "id": "grant_increases_available",
-      "now": "2026-10-16T00:00:00+00:00",
+      "id": "yangong_1_hold_then_consume_settle",
+      "from": "yangong points.test.ts case 1 hold and available; settle is consume-track",
+      "now": "2026-09-01T00:00:00+00:00",
       "steps": [
         {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1000,
-          "source": "purchase",
-          "idempotency_key": "g1",
-          "lot_id": "lot1",
-          "ref": "sku:A"
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 2000,
+          "origin": "signup_grant",
+          "key": "signup:p-own",
+          "lot_id": "lot-signup",
+          "expires_at": "2026-10-01T00:00:00+00:00"
         },
         {
           "op": "balance",
-          "owner_id": "p1",
-          "available": 1000,
+          "owner_id": "p-own",
+          "available": 2000,
           "held": 0,
-          "remaining": 1000
-        },
-        {
-          "op": "lots",
-          "owner_id": "p1",
-          "lots": [
-            { "id": "lot1", "remaining": 1000, "reserved": 0, "original_amount": 1000 }
-          ]
-        },
-        {
-          "op": "entries",
-          "owner_id": "p1",
-          "entries": [{ "kind": "grant", "amount": 1000, "lot_id": "lot1" }]
-        }
-      ]
-    },
-    {
-      "id": "single_balance_not_dual_bucket",
-      "now": "2026-10-16T00:00:00+00:00",
-      "steps": [
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1000,
-          "source": "purchase",
-          "idempotency_key": "g-a",
-          "lot_id": "lot-a",
-          "ref": "sku:A"
-        },
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 2500,
-          "source": "grant",
-          "idempotency_key": "g-b",
-          "lot_id": "lot-b",
-          "ref": "sku:B"
-        },
-        {
-          "op": "balance",
-          "owner_id": "p1",
-          "available": 3500,
-          "held": 0,
-          "remaining": 3500
-        }
-      ]
-    },
-    {
-      "id": "hold_then_settle",
-      "now": "2026-10-16T00:00:00+00:00",
-      "steps": [
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 3000,
-          "source": "purchase",
-          "idempotency_key": "g-dh",
-          "lot_id": "lot-dh",
-          "ref": "sku:dh_std_2m"
+          "opened": 2000
         },
         {
           "op": "apply_hold",
-          "owner_id": "p1",
-          "amount": 3000,
-          "idempotency_key": "h-dh",
-          "hold_id": "hold-dh",
-          "ref": "sku:dh_std_2m"
+          "owner_id": "p-own",
+          "amount": 100,
+          "key": "hold:t1",
+          "hold_id": "hold-t1",
+          "ref": "task:t1"
         },
         {
           "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
-          "held": 3000,
-          "remaining": 3000
+          "owner_id": "p-own",
+          "available": 1900,
+          "held": 100,
+          "opened": 1900
         },
         {
           "op": "lots",
-          "owner_id": "p1",
-          "lots": [{ "id": "lot-dh", "remaining": 3000, "reserved": 3000, "original_amount": 3000 }]
+          "owner_id": "p-own",
+          "lots": [
+            {
+              "id": "lot-signup",
+              "amount": 2000,
+              "opened": 1900,
+              "origin": "signup_grant"
+            }
+          ]
         },
-        { "op": "settle", "hold_id": "hold-dh" },
+        {
+          "op": "hold",
+          "hold_id": "hold-t1",
+          "status": "held",
+          "slices": [{ "lot_id": "lot-signup", "amount": 100 }]
+        },
+        {
+          "op": "apply_consume_settle",
+          "owner_id": "p-own",
+          "hold_id": "hold-t1"
+        },
         {
           "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
+          "owner_id": "p-own",
+          "available": 1900,
           "held": 0,
-          "remaining": 0
+          "opened": 1900
+        },
+        { "op": "hold", "hold_id": "hold-t1", "status": "settled" },
+        {
+          "op": "apply_consume_settle",
+          "owner_id": "p-own",
+          "hold_id": "hold-t1"
         },
         {
           "op": "entries",
-          "owner_id": "p1",
+          "owner_id": "p-own",
           "entries": [
-            { "kind": "grant", "amount": 3000, "lot_id": "lot-dh" },
-            { "kind": "hold", "amount": 3000, "lot_id": "lot-dh", "hold_id": "hold-dh" },
-            { "kind": "settle", "amount": 3000, "lot_id": "lot-dh", "hold_id": "hold-dh" }
+            { "kind": "signup_grant", "delta": 2000, "lot_id": "lot-signup" },
+            { "kind": "task_hold", "delta": -100, "lot_id": "lot-signup", "hold_id": "hold-t1" },
+            {
+              "kind": "task_settlement",
+              "delta": 0,
+              "lot_id": "lot-signup",
+              "hold_id": "hold-t1"
+            }
           ]
         }
       ]
     },
     {
-      "id": "hold_then_release",
-      "now": "2026-10-16T00:00:00+00:00",
+      "id": "yangong_3_release_restores",
+      "from": "yangong points.test.ts case 3 cancel releases the full hold",
+      "now": "2026-09-01T00:00:00+00:00",
       "steps": [
         {
-          "op": "grant",
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 2000,
+          "origin": "signup_grant",
+          "key": "signup:p-own",
+          "lot_id": "lot-signup",
+          "expires_at": "2026-10-01T00:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p-own",
+          "amount": 200,
+          "key": "hold:t3",
+          "hold_id": "hold-t3"
+        },
+        { "op": "set_now", "now": "2026-09-02T00:00:00+00:00" },
+        { "op": "apply_release", "owner_id": "p-own", "hold_id": "hold-t3" },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 2000,
+          "held": 0,
+          "opened": 2000
+        },
+        { "op": "hold", "hold_id": "hold-t3", "status": "released" },
+        {
+          "op": "entries",
+          "owner_id": "p-own",
+          "entries": [
+            { "kind": "signup_grant", "delta": 2000, "lot_id": "lot-signup" },
+            { "kind": "task_hold", "delta": -200, "lot_id": "lot-signup", "hold_id": "hold-t3" },
+            { "kind": "task_release", "delta": 200, "lot_id": "lot-signup", "hold_id": "hold-t3" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "yangong_4_fefo_soonest_expiry",
+      "from": "yangong points.test.ts case 4 soonest expiry is spent first",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 2000,
+          "origin": "signup_grant",
+          "key": "signup:p-own",
+          "lot_id": "lot-signup",
+          "expires_at": "2026-10-01T00:00:00+00:00"
+        },
+        { "op": "set_now", "now": "2026-09-02T00:00:00+00:00" },
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 500,
+          "origin": "earned",
+          "key": "earned:seed",
+          "lot_id": "lot-earned",
+          "expires_at": null
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p-own",
+          "amount": 2000,
+          "key": "hold:t4",
+          "hold_id": "hold-t4"
+        },
+        {
+          "op": "lots",
+          "owner_id": "p-own",
+          "lots": [
+            { "id": "lot-signup", "amount": 2000, "opened": 0, "origin": "signup_grant" },
+            { "id": "lot-earned", "amount": 500, "opened": 500, "origin": "earned" }
+          ]
+        },
+        {
+          "op": "hold",
+          "hold_id": "hold-t4",
+          "status": "held",
+          "slices": [{ "lot_id": "lot-signup", "amount": 2000 }]
+        },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 500,
+          "held": 2000,
+          "opened": 500
+        },
+        {
+          "op": "entries",
+          "owner_id": "p-own",
+          "entries": [
+            { "kind": "signup_grant", "delta": 2000, "lot_id": "lot-signup" },
+            { "kind": "task_settlement", "delta": 500, "lot_id": "lot-earned" },
+            { "kind": "task_hold", "delta": -2000, "lot_id": "lot-signup", "hold_id": "hold-t4" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "yangong_5_expired_not_spendable",
+      "from": "yangong points.test.ts case 5 expired points cannot fund a hold",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 2000,
+          "origin": "signup_grant",
+          "key": "signup:p-own",
+          "lot_id": "lot-signup",
+          "expires_at": "2026-10-01T00:00:00+00:00"
+        },
+        { "op": "set_now", "now": "2026-10-02T00:00:00+00:00" },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 0,
+          "held": 0,
+          "opened": 2000
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p-own",
+          "amount": 100,
+          "key": "hold:t5",
+          "hold_id": "hold-t5",
+          "expect": "insufficient"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 0,
+          "held": 0,
+          "opened": 0
+        },
+        {
+          "op": "entries",
+          "owner_id": "p-own",
+          "entries": [
+            { "kind": "signup_grant", "delta": 2000, "lot_id": "lot-signup" },
+            { "kind": "expiry", "delta": -2000, "lot_id": "lot-signup" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "yangong_6_release_expired_slice_no_restore",
+      "from": "yangong points.test.ts case 6 release after expiry does not revive the slice",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 2000,
+          "origin": "signup_grant",
+          "key": "signup:p-own",
+          "lot_id": "lot-signup",
+          "expires_at": "2026-10-01T00:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p-own",
+          "amount": 200,
+          "key": "hold:t6",
+          "hold_id": "hold-t6"
+        },
+        { "op": "set_now", "now": "2026-10-02T00:00:00+00:00" },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 0,
+          "held": 200,
+          "opened": 1800
+        },
+        { "op": "apply_release", "owner_id": "p-own", "hold_id": "hold-t6" },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 0,
+          "held": 0,
+          "opened": 1800
+        },
+        { "op": "apply_expiry", "owner_id": "p-own" },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 0,
+          "held": 0,
+          "opened": 0
+        },
+        {
+          "op": "entries",
+          "owner_id": "p-own",
+          "entries": [
+            { "kind": "signup_grant", "delta": 2000, "lot_id": "lot-signup" },
+            { "kind": "task_hold", "delta": -200, "lot_id": "lot-signup", "hold_id": "hold-t6" },
+            { "kind": "expiry", "delta": 0, "lot_id": "lot-signup", "hold_id": "hold-t6" },
+            { "kind": "expiry", "delta": -1800, "lot_id": "lot-signup" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "yangong_50_fefo_partial_long_lot",
+      "from": "yangong points.test.ts #50 100 expiring plus 200 open, spend 150",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 100,
+          "origin": "signup_grant",
+          "key": "g:soon",
+          "lot_id": "lot-soon",
+          "expires_at": "2026-09-02T00:00:00+00:00"
+        },
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 200,
+          "origin": "earned",
+          "key": "g:long",
+          "lot_id": "lot-long",
+          "expires_at": null
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p-own",
+          "amount": 150,
+          "key": "hold:t50",
+          "hold_id": "hold-t50"
+        },
+        {
+          "op": "lots",
+          "owner_id": "p-own",
+          "lots": [
+            { "id": "lot-soon", "amount": 100, "opened": 0, "origin": "signup_grant" },
+            { "id": "lot-long", "amount": 200, "opened": 150, "origin": "earned" }
+          ]
+        },
+        {
+          "op": "hold",
+          "hold_id": "hold-t50",
+          "status": "held",
+          "slices": [
+            { "lot_id": "lot-soon", "amount": 100 },
+            { "lot_id": "lot-long", "amount": 50 }
+          ]
+        },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 150,
+          "held": 150,
+          "opened": 150
+        },
+        {
+          "op": "entries",
+          "owner_id": "p-own",
+          "entries": [
+            { "kind": "signup_grant", "delta": 100, "lot_id": "lot-soon" },
+            { "kind": "task_settlement", "delta": 200, "lot_id": "lot-long" },
+            { "kind": "task_hold", "delta": -100, "lot_id": "lot-soon", "hold_id": "hold-t50" },
+            { "kind": "task_hold", "delta": -50, "lot_id": "lot-long", "hold_id": "hold-t50" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "yangong_50_insufficient_atomic",
+      "from": "yangong points.test.ts #50 overspend fails and leaves the balance unchanged",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 40,
+          "origin": "signup_grant",
+          "key": "g:40",
+          "lot_id": "lot-40",
+          "expires_at": "2026-09-03T00:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p-own",
+          "amount": 41,
+          "key": "hold:neg",
+          "hold_id": "hold-neg",
+          "expect": "insufficient"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 40,
+          "held": 0,
+          "opened": 40
+        },
+        {
+          "op": "entries",
+          "owner_id": "p-own",
+          "entries": [{ "kind": "signup_grant", "delta": 40, "lot_id": "lot-40" }]
+        }
+      ]
+    },
+    {
+      "id": "yangong_10_consume_settle_replay",
+      "from": "yangong points.test.ts case 10 replayed once; consume settle writes no second line and no payee lot",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p-own",
+          "amount": 2000,
+          "origin": "signup_grant",
+          "key": "signup:p-own",
+          "lot_id": "lot-signup",
+          "expires_at": "2026-10-01T00:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p-own",
+          "amount": 50,
+          "key": "hold:t10",
+          "hold_id": "hold-t10"
+        },
+        { "op": "set_now", "now": "2026-09-02T00:00:00+00:00" },
+        { "op": "apply_consume_settle", "owner_id": "p-own", "hold_id": "hold-t10" },
+        { "op": "apply_consume_settle", "owner_id": "p-own", "hold_id": "hold-t10" },
+        {
+          "op": "balance",
+          "owner_id": "p-own",
+          "available": 1950,
+          "held": 0,
+          "opened": 1950
+        },
+        {
+          "op": "entries",
+          "owner_id": "p-own",
+          "entries": [
+            { "kind": "signup_grant", "delta": 2000, "lot_id": "lot-signup" },
+            { "kind": "task_hold", "delta": -50, "lot_id": "lot-signup", "hold_id": "hold-t10" },
+            {
+              "kind": "task_settlement",
+              "delta": 0,
+              "lot_id": "lot-signup",
+              "hold_id": "hold-t10"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "consume_settle_after_expiry_keeps_opened",
+      "from": "app-story-clip apply_consume_settle after the lot expiry instant",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
           "owner_id": "p1",
           "amount": 1000,
-          "idempotency_key": "g1",
-          "lot_id": "lot1"
+          "origin": "signup_grant",
+          "key": "g1",
+          "lot_id": "lot1",
+          "expires_at": "2026-09-02T00:00:00+00:00"
         },
         {
           "op": "apply_hold",
           "owner_id": "p1",
           "amount": 400,
-          "idempotency_key": "h1",
+          "key": "h1",
           "hold_id": "hold1"
         },
+        { "op": "set_now", "now": "2026-09-03T00:00:00+00:00" },
         {
           "op": "balance",
           "owner_id": "p1",
-          "available": 600,
+          "available": 0,
           "held": 400,
-          "remaining": 1000
+          "opened": 600
         },
-        { "op": "release", "hold_id": "hold1" },
+        { "op": "apply_consume_settle", "owner_id": "p1", "hold_id": "hold1" },
         {
           "op": "balance",
           "owner_id": "p1",
-          "available": 1000,
+          "available": 0,
           "held": 0,
-          "remaining": 1000
+          "opened": 600
+        },
+        { "op": "apply_expiry", "owner_id": "p1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "opened": 0
         },
         {
           "op": "entries",
           "owner_id": "p1",
           "entries": [
-            { "kind": "grant", "amount": 1000 },
-            { "kind": "hold", "amount": 400 },
-            { "kind": "release", "amount": 400 }
+            { "kind": "signup_grant", "delta": 1000, "lot_id": "lot1" },
+            { "kind": "task_hold", "delta": -400, "lot_id": "lot1", "hold_id": "hold1" },
+            { "kind": "task_settlement", "delta": 0, "lot_id": "lot1", "hold_id": "hold1" },
+            { "kind": "expiry", "delta": -600, "lot_id": "lot1" }
           ]
         }
       ]
     },
     {
-      "id": "insufficient_hold_is_atomic",
-      "now": "2026-10-16T00:00:00+00:00",
+      "id": "idempotent_grant_and_conflict",
+      "from": "grant_key replay; a different payload conflicts",
+      "now": "2026-09-01T00:00:00+00:00",
       "steps": [
         {
-          "op": "grant",
+          "op": "apply_grant",
           "owner_id": "p1",
           "amount": 1000,
-          "idempotency_key": "g1",
+          "origin": "signup_grant",
+          "key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "origin": "signup_grant",
+          "key": "g1",
+          "lot_id": "lot1"
+        },
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 1001,
+          "origin": "signup_grant",
+          "key": "g1",
+          "lot_id": "lot1",
+          "expect": "conflict"
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [{ "kind": "signup_grant", "delta": 1000, "lot_id": "lot1" }]
+        }
+      ]
+    },
+    {
+      "id": "idempotent_hold_and_terminal_replay",
+      "from": "hold key replay, consume-settle replay, release of a settled hold",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "origin": "signup_grant",
+          "key": "g1",
           "lot_id": "lot1"
         },
         {
           "op": "apply_hold",
           "owner_id": "p1",
-          "amount": 1001,
-          "idempotency_key": "h-over",
-          "hold_id": "hold-over",
-          "expect": "insufficient"
+          "amount": 200,
+          "key": "h1",
+          "hold_id": "hold1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 200,
+          "key": "h1",
+          "hold_id": "hold1"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 201,
+          "key": "h1",
+          "hold_id": "hold1",
+          "expect": "conflict"
+        },
+        { "op": "apply_consume_settle", "owner_id": "p1", "hold_id": "hold1" },
+        { "op": "apply_consume_settle", "owner_id": "p1", "hold_id": "hold1" },
+        {
+          "op": "apply_release",
+          "owner_id": "p1",
+          "hold_id": "hold1",
+          "expect": "hold_state"
         },
         {
           "op": "balance",
           "owner_id": "p1",
-          "available": 1000,
+          "available": 800,
           "held": 0,
-          "remaining": 1000
+          "opened": 800
         },
         {
           "op": "entries",
           "owner_id": "p1",
-          "entries": [{ "kind": "grant", "amount": 1000 }]
+          "entries": [
+            { "kind": "signup_grant", "delta": 1000, "lot_id": "lot1" },
+            { "kind": "task_hold", "delta": -200, "lot_id": "lot1", "hold_id": "hold1" },
+            { "kind": "task_settlement", "delta": 0, "lot_id": "lot1", "hold_id": "hold1" }
+          ]
         }
       ]
     },
     {
-      "id": "two_holds_then_partial_settle",
-      "now": "2026-10-16T00:00:00+00:00",
+      "id": "two_holds_then_consume_one",
+      "from": "two concurrent holds; consuming one leaves the other held",
+      "now": "2026-09-01T00:00:00+00:00",
       "steps": [
         {
-          "op": "grant",
+          "op": "apply_grant",
           "owner_id": "p1",
           "amount": 1000,
-          "idempotency_key": "g1",
+          "origin": "signup_grant",
+          "key": "g1",
           "lot_id": "lot1"
         },
         {
           "op": "apply_hold",
           "owner_id": "p1",
           "amount": 600,
-          "idempotency_key": "h1",
+          "key": "h1",
           "hold_id": "hold1"
         },
         {
           "op": "apply_hold",
           "owner_id": "p1",
           "amount": 500,
-          "idempotency_key": "h-over",
+          "key": "h-over",
           "hold_id": "hold-over",
           "expect": "insufficient"
         },
@@ -226,7 +662,7 @@
           "op": "apply_hold",
           "owner_id": "p1",
           "amount": 400,
-          "idempotency_key": "h2",
+          "key": "h2",
           "hold_id": "hold2"
         },
         {
@@ -234,305 +670,302 @@
           "owner_id": "p1",
           "available": 0,
           "held": 1000,
-          "remaining": 1000
+          "opened": 0
         },
-        { "op": "settle", "hold_id": "hold1" },
+        { "op": "apply_consume_settle", "owner_id": "p1", "hold_id": "hold1" },
         {
           "op": "balance",
           "owner_id": "p1",
           "available": 0,
           "held": 400,
-          "remaining": 400
+          "opened": 0
+        },
+        { "op": "hold", "hold_id": "hold2", "status": "held" },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "signup_grant", "delta": 1000, "lot_id": "lot1" },
+            { "kind": "task_hold", "delta": -600, "lot_id": "lot1", "hold_id": "hold1" },
+            { "kind": "task_hold", "delta": -400, "lot_id": "lot1", "hold_id": "hold2" },
+            { "kind": "task_settlement", "delta": 0, "lot_id": "lot1", "hold_id": "hold1" }
+          ]
         }
       ]
     },
     {
-      "id": "fifo_soonest_expiry",
-      "now": "2026-10-16T00:00:00+00:00",
+      "id": "paid_only_skips_signup_gift",
+      "from": "app-story-clip paid_only B-tier filter over the same balance",
+      "now": "2026-09-01T00:00:00+00:00",
       "steps": [
         {
-          "op": "grant",
+          "op": "apply_grant",
           "owner_id": "p1",
-          "amount": 1000,
-          "source": "grant",
-          "idempotency_key": "g-later",
-          "lot_id": "lot-later"
+          "amount": 100,
+          "origin": "signup_grant",
+          "key": "g-gift",
+          "lot_id": "lot-gift"
         },
         {
-          "op": "grant",
+          "op": "apply_grant",
           "owner_id": "p1",
-          "amount": 400,
-          "source": "promo",
-          "idempotency_key": "g-soon",
-          "lot_id": "lot-soon",
-          "expires_at": "2026-10-17T00:00:00+00:00"
+          "amount": 50,
+          "origin": "subscription_grant",
+          "key": "g-sub",
+          "lot_id": "lot-sub"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 150,
+          "held": 0,
+          "opened": 150,
+          "paid_only_available": 50
         },
         {
           "op": "apply_hold",
           "owner_id": "p1",
-          "amount": 500,
-          "idempotency_key": "h1",
+          "amount": 40,
+          "key": "h-b",
+          "hold_id": "hold-b",
+          "paid_only": true
+        },
+        {
+          "op": "lots",
+          "owner_id": "p1",
+          "lots": [
+            { "id": "lot-gift", "amount": 100, "opened": 100, "origin": "signup_grant" },
+            { "id": "lot-sub", "amount": 50, "opened": 10, "origin": "subscription_grant" }
+          ]
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 20,
+          "key": "h-b2",
+          "hold_id": "hold-b2",
+          "paid_only": true,
+          "expect": "insufficient"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 110,
+          "held": 40,
+          "opened": 110,
+          "paid_only_available": 10
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "signup_grant", "delta": 100, "lot_id": "lot-gift" },
+            { "kind": "subscription_grant", "delta": 50, "lot_id": "lot-sub" },
+            { "kind": "task_hold", "delta": -40, "lot_id": "lot-sub", "hold_id": "hold-b" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "single_balance_one_ledger",
+      "from": "one available total; paid_only skips daily_claim (gift) and counts subscription_grant",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 1000,
+          "origin": "signup_grant",
+          "key": "g-gift",
+          "lot_id": "lot-gift"
+        },
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 50,
+          "origin": "daily_claim",
+          "key": "g-day",
+          "lot_id": "lot-day"
+        },
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 2500,
+          "origin": "subscription_grant",
+          "key": "g-sub",
+          "lot_id": "lot-sub"
+        },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 3550,
+          "held": 0,
+          "opened": 3550,
+          "paid_only_available": 2500
+        }
+      ]
+    },
+    {
+      "id": "expiry_sweep_idempotent",
+      "from": "apply_expiry burns opened once",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 100,
+          "origin": "signup_grant",
+          "key": "g1",
+          "lot_id": "lot1",
+          "expires_at": "2026-09-01T01:00:00+00:00"
+        },
+        { "op": "set_now", "now": "2026-09-01T02:00:00+00:00" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "opened": 100
+        },
+        { "op": "apply_expiry", "owner_id": "p1" },
+        { "op": "apply_expiry", "owner_id": "p1" },
+        {
+          "op": "balance",
+          "owner_id": "p1",
+          "available": 0,
+          "held": 0,
+          "opened": 0
+        },
+        {
+          "op": "entries",
+          "owner_id": "p1",
+          "entries": [
+            { "kind": "signup_grant", "delta": 100, "lot_id": "lot1" },
+            { "kind": "expiry", "delta": -100, "lot_id": "lot1" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fefo_equal_expiry_earlier_grant",
+      "from": "same expires_at: earlier granted_at is spent first",
+      "now": "2026-09-01T00:00:00+00:00",
+      "steps": [
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 10,
+          "origin": "signup_grant",
+          "key": "g-early",
+          "lot_id": "lot-early",
+          "expires_at": "2026-09-05T00:00:00+00:00"
+        },
+        { "op": "set_now", "now": "2026-09-02T00:00:00+00:00" },
+        {
+          "op": "apply_grant",
+          "owner_id": "p1",
+          "amount": 10,
+          "origin": "signup_grant",
+          "key": "g-late",
+          "lot_id": "lot-late",
+          "expires_at": "2026-09-05T00:00:00+00:00"
+        },
+        {
+          "op": "apply_hold",
+          "owner_id": "p1",
+          "amount": 10,
+          "key": "h1",
           "hold_id": "hold1"
         },
         {
           "op": "lots",
           "owner_id": "p1",
           "lots": [
-            { "id": "lot-soon", "remaining": 400, "reserved": 400, "original_amount": 400 },
-            { "id": "lot-later", "remaining": 1000, "reserved": 100, "original_amount": 1000 }
+            { "id": "lot-early", "amount": 10, "opened": 0, "origin": "signup_grant" },
+            { "id": "lot-late", "amount": 10, "opened": 10, "origin": "signup_grant" }
           ]
         },
         {
-          "op": "entries",
-          "owner_id": "p1",
-          "entries": [
-            { "kind": "grant", "amount": 1000, "lot_id": "lot-later" },
-            { "kind": "grant", "amount": 400, "lot_id": "lot-soon" },
-            { "kind": "hold", "amount": 400, "lot_id": "lot-soon", "hold_id": "hold1" },
-            { "kind": "hold", "amount": 100, "lot_id": "lot-later", "hold_id": "hold1" }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "expired_unreserved_not_spendable",
-      "now": "2026-10-16T00:00:00+00:00",
-      "steps": [
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1000,
-          "idempotency_key": "g1",
-          "lot_id": "lot1",
-          "expires_at": "2026-10-16T01:00:00+00:00"
-        },
-        { "op": "set_now", "now": "2026-10-16T02:00:00+00:00" },
-        {
-          "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
-          "held": 0,
-          "remaining": 1000
-        },
-        {
-          "op": "apply_hold",
-          "owner_id": "p1",
-          "amount": 1,
-          "idempotency_key": "h1",
+          "op": "hold",
           "hold_id": "hold1",
-          "expect": "insufficient"
-        },
-        { "op": "expire_due", "owner_id": "p1" },
-        {
-          "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
-          "held": 0,
-          "remaining": 0
-        },
-        {
-          "op": "entries",
-          "owner_id": "p1",
-          "entries": [
-            { "kind": "grant", "amount": 1000, "lot_id": "lot1" },
-            { "kind": "expire", "amount": 1000, "lot_id": "lot1" }
-          ]
+          "status": "held",
+          "slices": [{ "lot_id": "lot-early", "amount": 10 }]
         }
       ]
     },
     {
-      "id": "release_after_expiry_does_not_restore",
-      "now": "2026-10-16T00:00:00+00:00",
+      "id": "release_mixed_slices",
+      "from": "release restores only the slice that has not expired",
+      "now": "2026-09-01T00:00:00+00:00",
       "steps": [
         {
-          "op": "grant",
+          "op": "apply_grant",
           "owner_id": "p1",
-          "amount": 1000,
-          "idempotency_key": "g1",
-          "lot_id": "lot1",
-          "expires_at": "2026-10-16T01:00:00+00:00"
+          "amount": 100,
+          "origin": "signup_grant",
+          "key": "g-soon",
+          "lot_id": "lot-soon",
+          "expires_at": "2026-09-02T00:00:00+00:00"
         },
         {
-          "op": "apply_hold",
-          "owner_id": "p1",
-          "amount": 400,
-          "idempotency_key": "h1",
-          "hold_id": "hold1"
-        },
-        { "op": "set_now", "now": "2026-10-16T02:00:00+00:00" },
-        {
-          "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
-          "held": 400,
-          "remaining": 1000
-        },
-        { "op": "release", "hold_id": "hold1" },
-        {
-          "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
-          "held": 0,
-          "remaining": 600
-        },
-        { "op": "expire_due", "owner_id": "p1" },
-        {
-          "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
-          "held": 0,
-          "remaining": 0
-        },
-        {
-          "op": "entries",
-          "owner_id": "p1",
-          "entries": [
-            { "kind": "grant", "amount": 1000 },
-            { "kind": "hold", "amount": 400 },
-            { "kind": "release", "amount": 400 },
-            { "kind": "expire", "amount": 400 },
-            { "kind": "expire", "amount": 600 }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "settle_after_expiry_consumes_hold",
-      "now": "2026-10-16T00:00:00+00:00",
-      "steps": [
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1000,
-          "idempotency_key": "g1",
-          "lot_id": "lot1",
-          "expires_at": "2026-10-16T01:00:00+00:00"
-        },
-        {
-          "op": "apply_hold",
-          "owner_id": "p1",
-          "amount": 400,
-          "idempotency_key": "h1",
-          "hold_id": "hold1"
-        },
-        { "op": "set_now", "now": "2026-10-16T02:00:00+00:00" },
-        { "op": "settle", "hold_id": "hold1" },
-        {
-          "op": "balance",
-          "owner_id": "p1",
-          "available": 0,
-          "held": 0,
-          "remaining": 600
-        },
-        {
-          "op": "entries",
-          "owner_id": "p1",
-          "entries": [
-            { "kind": "grant", "amount": 1000 },
-            { "kind": "hold", "amount": 400 },
-            { "kind": "settle", "amount": 400 }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "idempotent_grant_and_conflict",
-      "now": "2026-10-16T00:00:00+00:00",
-      "steps": [
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1000,
-          "idempotency_key": "g1",
-          "lot_id": "lot1"
-        },
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1000,
-          "idempotency_key": "g1",
-          "lot_id": "lot1"
-        },
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1001,
-          "idempotency_key": "g1",
-          "lot_id": "lot1",
-          "expect": "conflict"
-        },
-        {
-          "op": "entries",
-          "owner_id": "p1",
-          "entries": [{ "kind": "grant", "amount": 1000, "lot_id": "lot1" }]
-        }
-      ]
-    },
-    {
-      "id": "idempotent_hold_and_terminal_replay",
-      "now": "2026-10-16T00:00:00+00:00",
-      "steps": [
-        {
-          "op": "grant",
-          "owner_id": "p1",
-          "amount": 1000,
-          "idempotency_key": "g1",
-          "lot_id": "lot1"
-        },
-        {
-          "op": "apply_hold",
+          "op": "apply_grant",
           "owner_id": "p1",
           "amount": 200,
-          "idempotency_key": "h1",
-          "hold_id": "hold1"
+          "origin": "signup_grant",
+          "key": "g-long",
+          "lot_id": "lot-long",
+          "expires_at": null
         },
         {
           "op": "apply_hold",
           "owner_id": "p1",
-          "amount": 200,
-          "idempotency_key": "h1",
+          "amount": 150,
+          "key": "h1",
           "hold_id": "hold1"
         },
+        { "op": "set_now", "now": "2026-09-03T00:00:00+00:00" },
+        { "op": "apply_release", "owner_id": "p1", "hold_id": "hold1" },
         {
-          "op": "apply_hold",
+          "op": "lots",
           "owner_id": "p1",
-          "amount": 201,
-          "idempotency_key": "h1",
-          "hold_id": "hold1",
-          "expect": "conflict"
+          "lots": [
+            { "id": "lot-soon", "amount": 100, "opened": 0, "origin": "signup_grant" },
+            { "id": "lot-long", "amount": 200, "opened": 200, "origin": "signup_grant" }
+          ]
         },
-        { "op": "settle", "hold_id": "hold1" },
-        { "op": "settle", "hold_id": "hold1" },
-        { "op": "release", "hold_id": "hold1", "expect": "hold_state" },
         {
           "op": "balance",
           "owner_id": "p1",
-          "available": 800,
+          "available": 200,
           "held": 0,
-          "remaining": 800
+          "opened": 200
         },
         {
           "op": "entries",
           "owner_id": "p1",
           "entries": [
-            { "kind": "grant", "amount": 1000 },
-            { "kind": "hold", "amount": 200 },
-            { "kind": "settle", "amount": 200 }
+            { "kind": "signup_grant", "delta": 100, "lot_id": "lot-soon" },
+            { "kind": "signup_grant", "delta": 200, "lot_id": "lot-long" },
+            { "kind": "task_hold", "delta": -100, "lot_id": "lot-soon", "hold_id": "hold1" },
+            { "kind": "task_hold", "delta": -50, "lot_id": "lot-long", "hold_id": "hold1" },
+            { "kind": "expiry", "delta": 0, "lot_id": "lot-soon", "hold_id": "hold1" },
+            { "kind": "task_release", "delta": 50, "lot_id": "lot-long", "hold_id": "hold1" }
           ]
         }
       ]
     },
     {
       "id": "org_owner_same_ledger",
-      "now": "2026-10-16T00:00:00+00:00",
+      "from": "an org owner uses the same consume-track rules",
+      "now": "2026-09-01T00:00:00+00:00",
       "steps": [
         {
-          "op": "grant",
+          "op": "apply_grant",
           "owner_id": "org1",
           "owner_kind": "org",
           "amount": 50,
-          "source": "adjust",
-          "idempotency_key": "g-org",
+          "origin": "admin_adjustment",
+          "key": "g-org",
           "lot_id": "lot-org",
           "ref": "ops-adjust"
         },
@@ -541,7 +974,7 @@
           "owner_id": "org1",
           "owner_kind": "org",
           "amount": 20,
-          "idempotency_key": "h-org",
+          "key": "h-org",
           "hold_id": "hold-org"
         },
         {
@@ -549,7 +982,15 @@
           "owner_id": "org1",
           "available": 30,
           "held": 20,
-          "remaining": 50
+          "opened": 30
+        },
+        {
+          "op": "entries",
+          "owner_id": "org1",
+          "entries": [
+            { "kind": "admin_adjustment", "delta": 50, "lot_id": "lot-org" },
+            { "kind": "task_hold", "delta": -20, "lot_id": "lot-org", "hold_id": "hold-org" }
+          ]
         }
       ]
     }

@@ -38,16 +38,44 @@ def test_person_rejects_unknown_field_and_bad_email():
         validate("person", person)
 
 
-def test_point_lot_rejects_negative_remaining_and_dual_bucket_field():
+def test_point_lot_rejects_negative_opened_and_dual_bucket_field():
     lot = dict(load_examples()["point_lot"])
-    lot["remaining"] = -1
+    lot["opened"] = -1
     with pytest.raises(SchemaError):
         validate("point_lot", lot)
 
     lot = dict(load_examples()["point_lot"])
-    lot["paid_remaining"] = 1
+    lot["paid_opened"] = 1
     with pytest.raises(SchemaError):
         validate("point_lot", lot)
+
+    lot = dict(load_examples()["point_lot"])
+    lot["remaining"] = 1
+    with pytest.raises(SchemaError):
+        validate("point_lot", lot)
+
+
+def test_entry_delta_is_signed_and_old_kinds_are_gone():
+    entry = dict(load_examples()["entry"])
+    entry["delta"] = 0
+    entry["kind"] = "task_settlement"
+    validate("entry", entry)
+
+    entry["delta"] = -5
+    entry["kind"] = "task_hold"
+    validate("entry", entry)
+
+    entry["kind"] = "grant"
+    with pytest.raises(SchemaError):
+        validate("entry", entry)
+
+
+def test_hold_status_uses_held_not_open():
+    hold = dict(load_examples()["hold"])
+    assert hold["status"] == "held"
+    hold["status"] = "open"
+    with pytest.raises(SchemaError):
+        validate("hold", hold)
 
 
 def test_schema_files_are_objects():
