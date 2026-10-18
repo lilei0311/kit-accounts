@@ -19,6 +19,7 @@ _ERRORS = {
     "invalid": InvalidPointsArgument,
     "not_found": NotFound,
 }
+_CREATE_KINDS = {"signup_grant", "subscription_grant", "daily_claim", "admin_adjustment"}
 
 
 class Clock:
@@ -37,6 +38,7 @@ def test_golden_case(case: dict):
     for step in case["steps"]:
         _run_step(engine, clock, step, owners)
     for owner in owners:
+        assert engine.balances_match_ledger(owner)
         _validate_owner(engine, owner)
 
 
@@ -56,16 +58,21 @@ def _run_step(engine: PointsEngine, clock: Clock, step: dict, owners: set[str]) 
         balance = engine.balance(step["owner_id"])
         assert balance.available == step["available"]
         assert balance.held == step["held"]
-        assert balance.remaining == step["remaining"]
-        assert balance.available + balance.held <= balance.remaining
+        assert balance.opened == step["opened"]
+        assert engine.available(step["owner_id"]) == step["available"]
+        assert engine.held_amount(step["owner_id"]) == step["held"]
+        if "paid_only_available" in step:
+            assert engine.available(step["owner_id"], paid_only=True) == step["paid_only_available"]
         return
     if op == "lots":
         for expected in step["lots"]:
             lot = engine.get_lot(expected["id"])
             assert lot.owner_id == step["owner_id"]
-            assert lot.remaining == expected["remaining"]
-            assert lot.reserved == expected["reserved"]
-            assert lot.original_amount == expected["original_amount"]
+            assert lot.amount == expected["amount"]
+            assert lot.opened == expected["opened"]
+            assert lot.source == lot.origin
+            if "origin" in expected:
+                assert lot.origin == expected["origin"]
         return
     if op == "entries":
         actual = engine.entries(step["owner_id"])
@@ -73,54 +80,74 @@ def _run_step(engine: PointsEngine, clock: Clock, step: dict, owners: set[str]) 
         assert len(actual) == len(expected)
         for got, want in zip(actual, expected, strict=True):
             assert got.kind == want["kind"]
-            assert got.amount == want["amount"]
+            assert got.delta == want["delta"]
             if "lot_id" in want:
                 assert got.lot_id == want["lot_id"]
             if "hold_id" in want:
                 assert got.hold_id == want["hold_id"]
         return
-    if op == "expire_due" and step.get("owner_id"):
-        owners.add(step["owner_id"])
+    if op == "hold":
+        hold = engine.get_hold(step["hold_id"])
+        assert hold.status == step["status"]
+        if "slices" in step:
+            assert [(item.lot_id, item.amount) for item in hold.slices] == [
+                (item["lot_id"], item["amount"]) for item in step["slices"]
+            ]
+        return
     _mutate(engine, step)
 
 
 def _mutate(engine: PointsEngine, step: dict):
     op = step["op"]
-    if op == "grant":
+    expires_at = step.get("expires_at")
+    if op == "apply_grant":
         kwargs = {
             "owner_id": step["owner_id"],
             "amount": step["amount"],
-            "idempotency_key": step["idempotency_key"],
+            "key": step["key"],
             "owner_kind": step.get("owner_kind", "person"),
-            "source": step.get("source", "grant"),
+            "origin": step.get("origin", "signup_grant"),
             "lot_id": step.get("lot_id"),
             "ref": step.get("ref"),
         }
-        if "expires_at" in step and step["expires_at"] is not None:
-            kwargs["expires_at"] = datetime.fromisoformat(step["expires_at"])
-        return engine.grant(**kwargs)
+        if expires_at is not None:
+            kwargs["expires_at"] = datetime.fromisoformat(expires_at)
+        return engine.apply_grant(**kwargs)
     if op == "apply_hold":
         return engine.apply_hold(
             owner_id=step["owner_id"],
             amount=step["amount"],
-            idempotency_key=step["idempotency_key"],
+            key=step["key"],
             owner_kind=step.get("owner_kind", "person"),
             hold_id=step.get("hold_id"),
             ref=step.get("ref"),
+            paid_only=step.get("paid_only", False),
         )
-    if op == "settle":
-        return engine.settle(step["hold_id"])
-    if op == "release":
-        return engine.release(step["hold_id"])
-    if op == "expire_due":
-        return engine.expire_due(owner_id=step.get("owner_id"))
+    if op == "apply_consume_settle":
+        return engine.apply_consume_settle(step["hold_id"])
+    if op == "apply_release":
+        return engine.apply_release(step["hold_id"])
+    if op == "apply_expiry":
+        return engine.apply_expiry(owner_id=step.get("owner_id"))
     raise AssertionError(f"unexpected op {op}")
 
 
 def _validate_owner(engine: PointsEngine, owner: str) -> None:
     for entry in engine.entries(owner):
         validate("entry", entry.to_dict())
-        if entry.lot_id is not None:
-            validate("point_lot", engine.get_lot(entry.lot_id).to_dict())
+        validate("point_lot", engine.get_lot(entry.lot_id).to_dict())
         if entry.hold_id is not None:
             validate("hold", engine.get_hold(entry.hold_id).to_dict())
+        if entry.delta == 0:
+            assert entry.kind in {"task_settlement", "expiry"}
+        if entry.kind == "task_hold":
+            assert entry.delta < 0
+        if entry.kind == "task_release":
+            assert entry.delta > 0
+        if entry.kind in _CREATE_KINDS:
+            assert entry.delta > 0
+        if entry.kind == "expiry" and entry.delta != 0:
+            assert entry.delta < 0
+        lot = engine.get_lot(entry.lot_id)
+        assert 0 <= lot.opened <= lot.amount
+        assert lot.source == lot.origin

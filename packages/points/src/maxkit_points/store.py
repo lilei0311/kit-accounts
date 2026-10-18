@@ -1,4 +1,7 @@
-"""Points persistence port plus the in-memory adapter used by tests and local apps."""
+"""Points persistence port plus the in-memory adapter used by tests and local apps.
+
+SQLAlchemy stays out of scope. The port is the seam a later adapter can implement.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ from maxkit_points.models import Entry, Hold, IdempotencyRecord, PointLot
 
 class PointsStore(Protocol):
     def transaction(self) -> Iterator[None]: ...
+
+    def next_id(self, prefix: str) -> str: ...
 
     def save_lot(self, lot: PointLot) -> None: ...
 
@@ -31,6 +36,8 @@ class PointsStore(Protocol):
 
     def entries_for_owner(self, owner_id: str) -> list[Entry]: ...
 
+    def get_entry_by_key(self, key: str) -> Entry | None: ...
+
     def get_idempotency(self, key: str) -> IdempotencyRecord | None: ...
 
     def put_idempotency(self, record: IdempotencyRecord) -> None: ...
@@ -39,6 +46,7 @@ class PointsStore(Protocol):
 class MemoryPointsStore:
     def __init__(self) -> None:
         self._lock = Lock()
+        self._seq = 0
         self.lots: dict[str, PointLot] = {}
         self.holds: dict[str, Hold] = {}
         self.entries: list[Entry] = []
@@ -49,6 +57,10 @@ class MemoryPointsStore:
         with self._lock:
             yield
 
+    def next_id(self, prefix: str) -> str:
+        self._seq += 1
+        return f"{prefix}_{self._seq:08d}"
+
     def save_lot(self, lot: PointLot) -> None:
         self.lots[lot.id] = lot
 
@@ -57,10 +69,10 @@ class MemoryPointsStore:
 
     def lots_for_owner(self, owner_id: str) -> list[PointLot]:
         rows = [lot for lot in self.lots.values() if lot.owner_id == owner_id]
-        return sorted(rows, key=lambda lot: (lot.created_at, lot.id))
+        return sorted(rows, key=lambda lot: (lot.granted_at, lot.id))
 
     def all_lots(self) -> list[PointLot]:
-        return sorted(self.lots.values(), key=lambda lot: (lot.created_at, lot.id))
+        return sorted(self.lots.values(), key=lambda lot: (lot.granted_at, lot.id))
 
     def save_hold(self, hold: Hold) -> None:
         self.holds[hold.id] = hold
@@ -77,6 +89,12 @@ class MemoryPointsStore:
 
     def entries_for_owner(self, owner_id: str) -> list[Entry]:
         return [entry for entry in self.entries if entry.owner_id == owner_id]
+
+    def get_entry_by_key(self, key: str) -> Entry | None:
+        for entry in self.entries:
+            if entry.key == key:
+                return entry
+        return None
 
     def get_idempotency(self, key: str) -> IdempotencyRecord | None:
         return self.idempotency.get(key)

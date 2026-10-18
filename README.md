@@ -8,27 +8,36 @@ MaxStorm 私有 Python monorepo。Phase 1–2 只放可 import 的积木：契�
 |---|---|---|---|
 | `maxkit-contracts` | `maxkit_contracts` | Person / Org / PointLot / Entry / Hold 的 JSON Schema，以及积分 golden vectors | `jsonschema` |
 | `maxkit-identity` | `maxkit_identity` | Person、Org、验证码、Session、外部身份连接器口 | `maxkit-contracts` |
-| `maxkit-points` | `maxkit_points` | lot + entry + hold 单一余额引擎 | `maxkit-contracts` |
+| `maxkit-points` | `maxkit_points` | 消费轨 lot + 带符号 entry + hold | `maxkit-contracts` |
 | `maxkit-guard` | `maxkit_guard` | 进程内固定窗口限流占位 | 无 |
 
 依赖方向是 contracts ← identity、contracts ← points。identity 与 points **互不 import**。积分引擎里的 `owner_id` 是不透明字符串；应用先用 identity 解析出 Person 或 Org，再把 id 交给 points。
 
 `maxkit_identity.IdentityService.require_person` 是应用层 `require_user` 的无框架核心。FastAPI 依赖包装留在各 app，不放进本仓。
 
-## 积分语义
+## 积分语义（消费轨）
 
-一条账，不设付费桶 / 免费桶。`PointLot.source`（`grant` / `purchase` / `promo` / `adjust`）只说明这笔点数从哪来，不参与余额分列。
+`maxkit_points` 是 **消费轨** 账本，词表与 yangong / app-story-clip 对齐，结算行为与 story-clip 的 `apply_consume_settle` 对齐。对照笔记是 2026-10-18 的 `kit-py-golden-gap-2026-10-18`：lot 用原始 `amount` + 可花 `opened`，hold 立刻减少 `opened`；yangong `applySettle` 把冻结额发给 winner 的做法属于 **竞赛轨**，本引擎不实现。
 
-- **lot** 是余额真相：`remaining` 是账上还在的点数，`reserved` 是未关闭 hold 占住的部分。
-- **entry** 是只追加的审计行：`grant` / `hold` / `settle` / `release` / `expire`。schema 里的 `adjust` 行本阶段引擎不写；正向调整走 `source=adjust` 的 grant。
-- **hold** 是预占。`apply_hold` 只增加 `reserved`，不减少 `remaining`。`settle` 才真正扣掉。`release` 把预占还回去。
-- 可花余额 `available = spendable - reserved`。未过期 lot 的 spendable 是 `remaining`；已过期 lot 只剩已被 hold 锁住的部分，未预占的过期点数不能再拿去 hold。
-- `expire_due` 把已过期且未预占的点数写成 `expire` 行并从 `remaining` 划掉。扫完之后 `available + held == remaining`。
-- 分配顺序：`expires_at` 越早越先花，没有过期时间的 lot 最后花，其次 `created_at`、id。
-- 同一 idempotency key、同一 payload 重放返回原 lot / hold，不追加 entry。payload 不同则冲突。`settle` / `release` 对已经处于目标状态的 hold 重放是空操作；对另一终态则报错。
-- 过期之后：已经 open 的 hold 仍可 `settle`（下单时锁住的点数算数）。`release` 不会把这些点数放回 available。
-- 金额不够时 `apply_hold` 整笔失败，不写半笔预占。
-- 产品 SKU 价格（例如 story-clip 的 A / B / `dh_std_2m`）留在应用里。引擎只收 `amount`。需要审计时把 sku 放进 `ref`。
+一条账。`origin` 与 `source` 写同一个来源（`signup_grant` / `subscription_grant` / `daily_claim` / `earned` / `admin_adjustment`），不拆成付费桶和免费桶。`paid_only` 只是 B 档过滤：只花 `PAID_TIER_ORIGINS`（`subscription_grant`、`admin_adjustment`、`earned`，与 story-clip 一致）。`daily_claim` 和 `signup_grant` 仍在同一条账上，但是赠送/体验，不进这个过滤。不是产品 SKU 价目。
+
+| | 消费轨（本仓） | 竞赛轨（不实现，留给 kit-ts / 另卡） |
+|---|---|---|
+| lot | `amount` 保持发放原值，`opened` 是还能花的部分 | yangong 把余额直接记在 `amount` 上 |
+| hold | 立刻减少 `opened`，写负的 `task_hold` | 立刻减少 `amount`，写负的 `task_hold` |
+| settle | `apply_consume_settle`：hold → `settled`，每片写 `delta = 0` 的 `task_settlement`。不退回 `opened`，不给别人入账 | `applySettle`：给 winner 开一笔 `earned` |
+| release | 未过期的 slice 把 `opened` 加回，写 `task_release`。已过期的 slice 写 `delta = 0` 的 `expiry`，不把冻结续命 | 同左（未过期加回，过期零额） |
+| hold 状态 | `held` / `released` / `settled` | 同左 |
+
+- 分录带符号。`signup_grant`、`subscription_grant`、`daily_claim`、`admin_adjustment` 以及 `origin=earned` 的发放（记成正的 `task_settlement`）会开 lot。`task_hold` 为负，`task_release` 为正，扫掉过期可花余额的 `expiry` 为负。消费结算和「过期 slice 的 release」都是零额审计。
+- `available` 只加总还没过期且 `opened > 0` 的 lot。`held_amount` 是状态仍为 `held` 的冻结合计。冻结已经从 `opened` 里划走。
+- `apply_expiry` 把已到期的 `opened` 划成 0。hold 在扣款前会先扫本 owner 的过期余额；钱不够整笔失败，但这次扫除会留下。
+- 分配顺序（FEFO）：`expires_at` 越早越先花，没有过期时间的 lot 最后花，其次 `granted_at`、id。
+- 幂等键是 grant 的 `key`（落在 lot.`grant_key` 上）和 hold 的 `key`。同一 key、同一 payload 重放返回原 lot / hold，不追加分录。payload 不同则冲突。已经 `settled` 或 `released` 的 hold 再做同一动作是空操作；对另一终态则报错。
+- 余额可以由分录重建：`rebuild_lots` / `PointsEngine.balances_match_ledger`。零额审计不改 `opened`。正的 `task_settlement` 会重建成 `earned` lot，那是 `apply_grant(origin="earned")` 的形状；消费结算不写这种正数。
+- 同一 owner 可以同时有多笔 `held`。幂等按 hold key，不按任务 id 去重。
+- 产品 SKU 价格留在应用里。引擎只收点数 `amount`。需要审计时把外部 id 放进 `ref`。
+- 存储是内存里的 `PointsStore`。SQLAlchemy 不在本阶段。
 
 ## 身份语义
 
@@ -38,20 +47,20 @@ MaxStorm 私有 Python monorepo。Phase 1–2 只放可 import 的积木：契�
 - Session 只存 token 哈希。`require_person` 把 token 解析成 Person。Person 被冻结后，旧 session 也会失败。
 - 外部登录是连接器口：应用自己核对接证，连接器只抽出稳定 `subject`。本仓把 `(connector, subject)` 连到 Person，再开 session。这里没有微信 / OAuth 实现。
 
-## 与 yangong / story-clip 的差距（2026-10-16）
+## 与 yangong / story-clip 的边界
 
-本环境的 GitHub 令牌只能打开 `lilei0311/kit-py`。`lilei0311/app-story-clip` 与 `lilei0311/app-yangong` 返回 404，没有读到：
+消费轨语义来自 yangong `points.ts` / `points.test.ts` 的发放、冻结、释放、过期、FEFO、幂等、余额不足，加上 app-story-clip `app/credits` 的消费结算（`apply_consume_settle`：终态 + 零额审计）。`packages/contracts/src/maxkit_contracts/vectors/points_golden.json` 的 `provenance`、`excluded` 和每条 `from` 写了对应关系。`kit-py-golden-gap-2026-10-18` 是这次修订的对照笔记。
 
-- yangong `points.ts` / `points*.test.ts`
-- story-clip `app/credits/`、accounts、ratelimit
+`earned` 是 lot 的 `origin`，不是单独的 entry kind。发放 `origin=earned` 时，分录 kind 按 yangong `applyGrant` 写成正的 `task_settlement`。消费结算复用同一种 kind，但 `delta` 为 0，不会开新 lot。
 
-因此本仓的 schema 和 `packages/contracts/src/maxkit_contracts/vectors/points_golden.json` 是按需求卡和同日 shared-infra 笔记锁的替身，**不是**从 yangong 测试文件抽出来的原文。字段名若与 yangong 源码不一致，以对照源码后的修订为准。向量文件头里的 `provenance` 写了这件事。
+本环境的 GitHub 凭证对 `lilei0311/app-story-clip` 返回 404，读不到 `app/credits` 源文件。消费结算的形状按对照笔记和点名的 `apply_consume_settle` 锁死：hold 改为 `settled`，每片一条零额 `task_settlement`，不退回 `opened`，不给 winner 入账。`PAID_TIER_ORIGINS` 是 `subscription_grant`、`admin_adjustment`、`earned`，不含 `daily_claim`。
 
-同时：
+仍留在仓外：
 
-- 没有把 story-clip 的产品常量写进引擎。
-- 没有做 SQLAlchemy 适配。存储是 `PointsStore` / `IdentityStore` 加内存实现，避免在看不到 scw 表结构时猜一套 ORM。
-- 没有改 story-clip，也没有让它 import 本仓。
+- 竞赛轨 winner 入账（yangong `applySettle`）。
+- 订阅周期、每日领取的产品规则，以及 story-clip 的 SKU 价格。
+- SQLAlchemy / 真 ORM。应用自己实现 `PointsStore` 之前，用内存适配。
+- 不改 story-clip，也不让它 import 本仓。
 - 无支付适配、无真实用户、无密钥。
 
 ## 本阶段不做
@@ -74,5 +83,5 @@ CI（`.github/workflows/ci.yml`）跑同一组命令，并使用已提交的 `uv
 
 - [x] 私有仓可 `uv sync`，CI 跑 pytest + ruff
 - [x] `import maxkit_points` / `import maxkit_identity` 可在隔离烟测里通过
-- [x] golden vectors 按 lot+entry+hold、单一余额锁语义；与 yangong 源文件的逐条差异见上一节（源文件本次不可读）
+- [x] golden vectors 锁消费轨（opened、带符号分录、零额 consume settle）；竞赛轨用例列在向量文件的 `excluded` 里，不执行
 - [x] 无密钥、无真实用户数据
