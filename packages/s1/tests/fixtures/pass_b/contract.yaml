@@ -1,0 +1,6 @@
+contract_id: S1-FC-20261018-foxb
+template: B
+source_lang: en
+target_lang: zh-Hans
+pairing: "1:1 line"
+auto_lock: false

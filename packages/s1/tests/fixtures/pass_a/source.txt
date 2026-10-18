@@ -1,0 +1,7 @@
+The copper fox crossed the quiet ridge.
+It carried a glass lantern.
+[[STAGE]]
+The lantern glowed once.
+Use the term Northwind Protocol in this line.
+HOLD FRAME
+A spare line for the closing beat.

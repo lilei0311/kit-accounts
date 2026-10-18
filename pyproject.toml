@@ -8,6 +8,7 @@ dependencies = [
   "maxkit-guard",
   "maxkit-identity",
   "maxkit-points",
+  "maxkit-s1",
 ]
 
 [tool.uv]
@@ -21,6 +22,7 @@ maxkit-contracts = { workspace = true }
 maxkit-guard = { workspace = true }
 maxkit-identity = { workspace = true }
 maxkit-points = { workspace = true }
+maxkit-s1 = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -37,7 +39,13 @@ src = ["packages", "tests"]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["maxkit_contracts", "maxkit_guard", "maxkit_identity", "maxkit_points"]
+known-first-party = [
+  "maxkit_contracts",
+  "maxkit_guard",
+  "maxkit_identity",
+  "maxkit_points",
+  "maxkit_s1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["packages", "tests"]
