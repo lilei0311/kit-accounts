@@ -1,6 +1,6 @@
 # kit-py
 
-MaxStorm 私有 Python monorepo。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位，以及 S1 L1 格式检查。不发布到 PyPI，不进公开仓。
+MaxStorm 公开 Python monorepo（`maxkit-*`）。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位，以及 S1 L1 格式检查。本阶段**不**发布到 PyPI；源码在 GitHub 公开仓库。
 
 ## 包边界
 
@@ -76,7 +76,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 
 ## 本阶段不做
 
-真支付、`kit-ts`、model-registry / ai-providers、`agent-memory-infra`、`app-maxstorm-site`、Mario 相关代码、公开发布。
+真支付、`kit-ts`、model-registry / ai-providers（本 README 快照仍不覆盖，留作下一项 P1）、`agent-memory-infra`、`app-maxstorm-site`、Mario 相关代码。仓库已公开；本阶段仍不发布到 PyPI。
 
 ## 开发
 
@@ -93,7 +93,7 @@ CI（`.github/workflows/ci.yml`）跑同一组命令，并使用已提交的 `uv
 
 ## 验收对照
 
-- [x] 私有仓可 `uv sync`，CI 跑 pytest + ruff
+- [x] 公有仓可 `uv sync`，CI 跑 pytest + ruff
 - [x] `import maxkit_points` / `import maxkit_identity` 可在隔离烟测里通过
 - [x] golden vectors 锁消费轨（opened、带符号分录、零额 consume settle）；竞赛轨用例列在向量文件的 `excluded` 里，不执行
 - [x] 无密钥、无真实用户数据
