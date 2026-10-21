@@ -76,7 +76,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 
 ## 本阶段不做
 
-真支付、`kit-ts`、model-registry / ai-providers（本 README 快照仍不覆盖，留作下一项 P1）、`agent-memory-infra`、`app-maxstorm-site`、Mario 相关代码。仓库已公开；本阶段仍不发布到 PyPI。
+真支付、`kit-ts`、`agent-memory-infra`、`app-maxstorm-site`、Mario 相关代码。仓库已公开；本阶段仍不发布到 PyPI。`model-registry` / `ai-providers` 不进本 monorepo：MaxStorm 模型路由在独立基础设施里，本仓不实现。
 
 ## 开发
 
