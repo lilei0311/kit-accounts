@@ -16,8 +16,10 @@ def main() -> None:
     estimate = UsageEvent(
         model_id="demo-text-v0",
         modality="text",
-        units=10_000,
+        units=None,
         unit_kind="tokens",
+        input_units=0,
+        output_units=10_000,
     )
     held = sink.hold(
         estimate,
@@ -28,8 +30,10 @@ def main() -> None:
     actual = UsageEvent(
         model_id="demo-text-v0",
         modality="text",
-        units=5_000,
+        units=None,
         unit_kind="tokens",
+        input_units=0,
+        output_units=5_000,
     )
     settled = sink.settle(
         actual,

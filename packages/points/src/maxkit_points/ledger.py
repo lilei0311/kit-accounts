@@ -61,12 +61,16 @@ def rebuild_lots(entries: list[Entry], *, owner_kind: OwnerKind = "person") -> l
 
     Grant-shaped positive deltas set ``amount`` and ``opened``. ``task_hold``,
     ``task_release``, and negative ``expiry`` move ``opened`` only. Delta 0
-    (consume settle, or release of an already-expired slice) is audit-only.
+    (consume settle, ``usage_shortfall`` audit, or release of an
+    already-expired slice) is audit-only. ``usage_shortfall`` never moves
+    ``opened`` even if a non-zero delta were present — it is not an overdraft.
     """
 
     lots: dict[str, PointLot] = {}
     ordered = sorted(entries, key=lambda entry: (entry.at, entry.id))
     for entry in ordered:
+        if entry.kind == "usage_shortfall":
+            continue
         origin = _create_origin(entry)
         if origin is not None and entry.delta > 0:
             current = lots.get(entry.lot_id)

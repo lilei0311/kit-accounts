@@ -13,8 +13,10 @@ def test_text_billing_path_with_memory_store():
     estimate = UsageEvent(
         model_id="demo-text-v0",
         modality="text",
-        units=10_000,
+        units=None,
         unit_kind="tokens",
+        input_units=0,
+        output_units=10_000,
     )
     held = sink.hold(
         estimate,
@@ -30,8 +32,10 @@ def test_text_billing_path_with_memory_store():
     actual = UsageEvent(
         model_id="demo-text-v0",
         modality="text",
-        units=5_000,
+        units=None,
         unit_kind="tokens",
+        input_units=0,
+        output_units=5_000,
     )
     settled = sink.settle(
         actual,

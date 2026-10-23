@@ -1,8 +1,9 @@
 """Usage event, STATIC_CARDS field snapshot, and sink results.
 
 ``UsageEvent`` matches the kit-model-router emit shape: model, modality,
-units, unit_kind. ``account_id`` and ``request_id`` stay in application
-context, not on the event.
+unit_kind, plus tokens ``input_units``/``output_units`` or non-token
+``units``. ``account_id`` and ``request_id`` stay in application context,
+not on the event.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ class UsageEvent:
     modality: str
     units: int | float | Decimal | None
     unit_kind: str
+    input_units: int | float | Decimal | None = None
+    output_units: int | float | Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -47,8 +50,9 @@ class StaticCard:
 class UsageShortfall:
     """Bridge-level audit when actual points exceed the hold and top-up fails.
 
-    Not a new ledger entry kind. The consume track still writes
-    ``task_hold`` / ``task_settlement`` / ``task_release`` only.
+    Also written as a formal ``usage_shortfall`` ledger entry (delta 0).
+    That line is audit-only: it is not an overdraft and does not change
+    ``opened``.
     """
 
     request_id: str

@@ -9,6 +9,7 @@ from maxkit_usage_bridge import (
     RateTable,
     StaticCard,
     compute_points,
+    compute_token_points,
 )
 
 
@@ -16,14 +17,28 @@ def test_points_per_yuan_is_internal_constant():
     assert POINTS_PER_YUAN == 100
 
 
-def test_tokens_use_conservative_max_input_output():
+def test_tokens_use_in_out_split_one_ceil():
     table = RateTable.from_snapshot()
-    # demo-text-v0: input 2, output 8 → max/1e6 = 8e-6 yuan/token
-    assert table.yuan_per_unit("demo-text-v0", "tokens") == Decimal("8") / Decimal("1000000")
-    assert table.points_for("demo-text-v0", "tokens", 1_000_000) == 800
-    assert table.points_for("demo-text-v0", "tokens", 10_000) == 8
-    assert table.points_for("demo-text-v0", "tokens", 5_000) == 4
-    assert table.points_for("demo-text-v0", "tokens", 1) == 1
+    # demo-text-v0: input 2 / output 8 yuan per million
+    assert table.rate_in("demo-text-v0") == Decimal("2") / Decimal("1000000")
+    assert table.rate_out("demo-text-v0") == Decimal("8") / Decimal("1000000")
+    assert table.points_for_tokens("demo-text-v0", 1_000_000, 0) == 200
+    assert table.points_for_tokens("demo-text-v0", 0, 1_000_000) == 800
+    assert table.points_for_tokens("demo-text-v0", 500_000, 500_000) == 500
+    # one ceil over the sum — per-leg ceil would be 1+1=2
+    assert table.points_for_tokens("demo-text-v0", 1, 1) == 1
+    assert table.points_for_tokens("demo-text-v0", 0, 0) == 0
+    raw = compute_token_points(
+        10_000,
+        2_000,
+        table.rate_in("demo-text-v0"),
+        table.rate_out("demo-text-v0"),
+    )
+    assert raw == 4
+    with pytest.raises(InvalidUsageArgument):
+        table.yuan_per_unit("demo-text-v0", "tokens")
+    with pytest.raises(InvalidUsageArgument):
+        table.points_for("demo-text-v0", "tokens", 10_000)
 
 
 def test_images_clips_chars_formulas():
@@ -44,7 +59,7 @@ def test_ceil_and_min_one_when_units_positive():
 def test_missing_or_unbillable_card_refuses():
     table = RateTable.from_snapshot()
     with pytest.raises(MissingRateCard) as err:
-        table.points_for("unknown-model", "tokens", 10)
+        table.points_for_tokens("unknown-model", 10, 0)
     assert err.value.model_id == "unknown-model"
     assert err.value.unit_kind == "tokens"
     assert table.has_rate("demo-text-v0", "seconds") is False
@@ -62,8 +77,22 @@ def test_injected_cards_and_invalid_args():
             )
         ]
     )
-    assert table.points_for("custom-text", "tokens", 1_000_000) == 100
+    assert table.points_for_tokens("custom-text", 1_000_000, 0) == 100
+    assert table.points_for_tokens("custom-text", 0, 1_000_000) == 100
     with pytest.raises(InvalidUsageArgument):
         RateTable(points_per_yuan=0)
     with pytest.raises(InvalidUsageArgument):
         compute_points(-1, Decimal("0.01"))
+    with pytest.raises(InvalidUsageArgument):
+        compute_token_points(-1, 0, Decimal("0.01"), Decimal("0.01"))
+    with pytest.raises(InvalidUsageArgument):
+        RateTable(rates={("m", "tokens"): Decimal("0.01")})
+    injected = RateTable(
+        rates={
+            ("m", "tokens", "in"): Decimal("2") / Decimal("1000000"),
+            ("m", "tokens", "out"): Decimal("8") / Decimal("1000000"),
+        }
+    )
+    assert injected.points_for_tokens("m", 1_000_000, 0) == 200
+    partial = RateTable([StaticCard(model_id="partial", price_per_million_input=2)])
+    assert partial.has_rate("partial", "tokens") is False

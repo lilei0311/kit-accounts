@@ -43,7 +43,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 | release | 未过期的 slice 把 `opened` 加回，写 `task_release`。已过期的 slice 写 `delta = 0` 的 `expiry`，不把冻结续命 | 同左（未过期加回，过期零额） |
 | hold 状态 | `held` / `released` / `settled` | 同左 |
 
-- 分录带符号。`signup_grant`、`subscription_grant`、`daily_claim`、`admin_adjustment` 以及 `origin=earned` 的发放（记成正的 `task_settlement`）会开 lot。`task_hold` 为负，`task_release` 为正，扫掉过期可花余额的 `expiry` 为负。消费结算和「过期 slice 的 release」都是零额审计。
+- 分录带符号（与 kit-meter points-contract 对齐）：`signup_grant`、`subscription_grant`、`daily_claim`、`admin_adjustment` 以及 `origin=earned` 的发放（记成正的 `task_settlement`）会开 lot。`task_hold` 为负；`task_release` 为正（回冲）；消费结算的 `task_settlement` 是零额审计（多退少补已由补 hold / release 落到余额）；正式 kind `usage_shortfall` 也是零额审计，**不作透支**。扫掉过期可花余额的 `expiry` 为负。
 - `available` 只加总还没过期且 `opened > 0` 的 lot。`held_amount` 是状态仍为 `held` 的冻结合计。冻结已经从 `opened` 里划走。
 - `apply_expiry` 把已到期的 `opened` 划成 0。hold 在扣款前会先扫本 owner 的过期余额；钱不够整笔失败，但这次扫除会留下。
 - 分配顺序（FEFO）：`expires_at` 越早越先花，没有过期时间的 lot 最后花，其次 `granted_at`、id。
@@ -56,11 +56,12 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 
 ## 用量 → 积分桥
 
-`maxkit_usage_bridge` 把应用层的 `UsageEvent` 换成消费轨预扣。`POINTS_PER_YUAN = 100` 是内部成本当量常数，不是对外 SKU 价。价表键是 `(model_id, unit_kind)` → `yuan_per_unit`，字段名来自 kit-model-router `STATIC_CARDS` 的冻结拷贝（`price_per_million_*` / `price_per_image_yuan` / `price_per_clip_yuan` / `price_per_1k_chars_yuan`），不是 live import。
+`maxkit_usage_bridge` 把应用层的 `UsageEvent` 换成消费轨预扣。`POINTS_PER_YUAN = 100` 是内部成本当量常数，不是对外 SKU 价。价表字段名来自 kit-model-router `STATIC_CARDS` 的冻结拷贝（`price_per_million_*` / `price_per_image_yuan` / `price_per_clip_yuan` / `price_per_1k_chars_yuan`），不是 live import。
 
 - 计费 unit：`tokens` / `images` / `clips` / `chars`。`seconds` 不计。`billing=platform` 才扣；BYOK 默认跳过。无价格卡则拒绝平台计费。
-- `points = ceil(units × yuan_per_unit × 100)`，有用量最少 1 分。tokens v0 用单 `units` 和保守 `max(input, output)/1e6`。
-- Sink：调用前 `hold`（`idempotency_key=request_id`），成功 `settle` 到实际（多退少补），失败 `release`。分录仍是 `task_hold` / `task_settlement` / `task_release`。
+- tokens：RateTable 提供 **in/out 两键** `(model_id, "tokens", "in"|"out")` → yuan/token。`points = ceil(input_units × rate_in + output_units × rate_out)`，其中 `rate_* = yuan_per_token × 100`。整笔一次 ceil，禁止 `max(in,out)` / 单腿 / 仅合计 `units`。
+- 非 tokens：键仍是 `(model_id, unit_kind)` → `yuan_per_unit`；`points = ceil(units × yuan_per_unit × 100)`，有用量最少 1 分。
+- Sink：调用前 `hold`（`idempotency_key=request_id`），成功 `settle` 到实际（多退少补），失败 `release`。补 hold 仍不足时 settle 已 hold 部分，并写正式 `usage_shortfall` 审计分录（delta 0，不作透支）。
 - 应用注入 Sink，并传入 `account_id` / `request_id`。库本身不是计费网关。接线说明见 [docs/app-wiring.md](docs/app-wiring.md)。
 
 ## 身份语义

@@ -28,6 +28,7 @@ EntryKind = Literal[
     "task_hold",
     "task_release",
     "task_settlement",
+    "usage_shortfall",
     "expiry",
     "admin_adjustment",
 ]
@@ -47,6 +48,7 @@ ENTRY_KINDS: tuple[EntryKind, ...] = (
     "task_hold",
     "task_release",
     "task_settlement",
+    "usage_shortfall",
     "expiry",
     "admin_adjustment",
 )

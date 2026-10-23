@@ -65,6 +65,10 @@ def test_entry_delta_is_signed_and_old_kinds_are_gone():
     entry["kind"] = "task_hold"
     validate("entry", entry)
 
+    entry["delta"] = 0
+    entry["kind"] = "usage_shortfall"
+    validate("entry", entry)
+
     entry["kind"] = "grant"
     with pytest.raises(SchemaError):
         validate("entry", entry)

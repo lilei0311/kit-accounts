@@ -22,6 +22,7 @@ _ENTRY_KINDS = {
     "task_hold",
     "task_release",
     "task_settlement",
+    "usage_shortfall",
     "expiry",
     "admin_adjustment",
 }

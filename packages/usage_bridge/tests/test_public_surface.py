@@ -22,6 +22,7 @@ def test_module_exports_are_stable_for_a_future_fastapi_shell():
         "PointsUsageSink",
         "UsageEvent",
         "STATIC_CARD_SNAPSHOT",
+        "compute_token_points",
     ):
         assert name in maxkit_usage_bridge.__all__
     assert UsageEvent.__dataclass_fields__.keys() >= {
@@ -29,6 +30,8 @@ def test_module_exports_are_stable_for_a_future_fastapi_shell():
         "modality",
         "units",
         "unit_kind",
+        "input_units",
+        "output_units",
     }
 
 
@@ -64,3 +67,6 @@ def test_app_wiring_doc_nails_ec2_and_block_layout_direction():
     assert "slots" in doc or "children" in doc
     assert "block catalog" in doc
     assert "React/Vue" in doc
+    assert "input_units" in doc
+    assert "rate_in" in doc
+    assert "usage_shortfall" in doc

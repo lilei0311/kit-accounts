@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "maxkit://contracts/entry.schema.json",
   "title": "Entry",
-  "description": "Append-only signed line. Positive deltas open lots. task_hold is negative and matches the opened decrement. task_release is positive. expiry is negative when it burns opened, or zero when a held slice expires on release. task_settlement is zero on consume settle. A positive task_settlement records an earned grant; the contest-track winner payout is not emitted by the consume-track engine.",
+  "description": "Append-only signed line. kit-meter points-contract signs: task_hold is negative; task_release is positive (refund); task_settlement is the consume-track net occupancy already applied by hold/release (delta 0 on consume settle; supplement is another hold, refund is release); usage_shortfall is a formal audit kind (delta 0, not an overdraft). Positive grant kinds open lots. A positive task_settlement records an earned grant; the contest-track winner payout is not emitted by the consume-track engine. expiry is negative when it burns opened, or zero when a held slice expires on release.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -30,6 +30,7 @@
         "task_hold",
         "task_release",
         "task_settlement",
+        "usage_shortfall",
         "expiry",
         "admin_adjustment"
       ]

@@ -139,7 +139,9 @@ def _validate_owner(engine: PointsEngine, owner: str) -> None:
         if entry.hold_id is not None:
             validate("hold", engine.get_hold(entry.hold_id).to_dict())
         if entry.delta == 0:
-            assert entry.kind in {"task_settlement", "expiry"}
+            assert entry.kind in {"task_settlement", "expiry", "usage_shortfall"}
+        if entry.kind == "usage_shortfall":
+            assert entry.delta == 0
         if entry.kind == "task_hold":
             assert entry.delta < 0
         if entry.kind == "task_release":

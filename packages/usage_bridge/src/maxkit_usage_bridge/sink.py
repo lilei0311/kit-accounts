@@ -2,7 +2,8 @@
 
 The app injects this sink. The library does not start an HTTP gateway and
 does not import kit-model-router. Ledger writes reuse consume-track
-``task_hold`` / ``task_settlement`` / ``task_release`` only.
+``task_hold`` / ``task_settlement`` / ``task_release``, plus formal
+``usage_shortfall`` when a settle top-up cannot cover the remainder.
 """
 
 from __future__ import annotations
@@ -54,8 +55,9 @@ class PointsUsageSink:
     """Application-injected UsageSink: RateTable convert + points verbs.
 
     ``account_id`` / ``request_id`` come from the app. ``UsageEvent`` stays
-    a pure usage record (model_id, modality, units, unit_kind).
-    ``idempotency_key`` for the primary hold is ``request_id``.
+    a pure usage record (model, modality, unit_kind, plus tokens I/O or
+    non-token units). ``idempotency_key`` for the primary hold is
+    ``request_id``.
     """
 
     def __init__(
@@ -124,8 +126,8 @@ class PointsUsageSink:
         if unit_kind not in BILLABLE_UNIT_KINDS:
             raise MissingRateCard(model_id, unit_kind)
 
-        units, estimated = _resolve_units(event)
-        if units == 0:
+        quantity = _resolve_quantity(event)
+        if quantity.points_units == 0:
             return self._skip(
                 request,
                 account,
@@ -137,6 +139,8 @@ class PointsUsageSink:
                     points=0,
                     estimated=False,
                     skipped_reason="no_usage",
+                    input_units=quantity.input_units,
+                    output_units=quantity.output_units,
                 ),
                 reason="no_usage",
                 model_id=model_id,
@@ -145,15 +149,17 @@ class PointsUsageSink:
         if not self._rates.has_rate(model_id, unit_kind):
             raise MissingRateCard(model_id, unit_kind)
 
-        points = self._rates.points_for(model_id, unit_kind, units)
+        points = self._points_for(event, quantity)
         payload = _payload(
             account_id=account,
             billing=mode,
             model_id=model_id,
             unit_kind=unit_kind,
             points=points,
-            estimated=estimated,
+            estimated=quantity.estimated,
             skipped_reason=None,
+            input_units=quantity.input_units,
+            output_units=quantity.output_units,
         )
         with self._lock:
             replay = self._replay(request, payload)
@@ -173,7 +179,7 @@ class PointsUsageSink:
                 status="held",
                 hold_ids=[hold.id],
                 points=points,
-                estimated=estimated,
+                estimated=quantity.estimated,
                 model_id=model_id,
                 unit_kind=unit_kind,
             )
@@ -277,15 +283,34 @@ class PointsUsageSink:
             return None if state is None else self._result(state)
 
     def _actual_points(self, event: UsageEvent, state: _RequestState) -> tuple[int, bool]:
+        model_id, unit_kind = _event_key(event)
+        if unit_kind == "tokens":
+            quantity = _resolve_quantity(event)
+            if quantity.points_units == 0:
+                return 0, False
+            if not self._rates.has_rate(model_id, unit_kind):
+                raise MissingRateCard(model_id, unit_kind)
+            return self._points_for(event, quantity), quantity.estimated
         if event.units is None:
             return state.points, state.estimated
-        units, estimated = _resolve_units(event)
-        if units == 0:
+        quantity = _resolve_quantity(event)
+        if quantity.points_units == 0:
             return 0, False
-        model_id, unit_kind = _event_key(event)
         if not self._rates.has_rate(model_id, unit_kind):
             raise MissingRateCard(model_id, unit_kind)
-        return self._rates.points_for(model_id, unit_kind, units), estimated
+        return self._points_for(event, quantity), quantity.estimated
+
+    def _points_for(self, event: UsageEvent, quantity: _Quantity) -> int:
+        model_id, unit_kind = _event_key(event)
+        if unit_kind == "tokens":
+            if quantity.input_units is None or quantity.output_units is None:
+                raise InvalidUsageArgument("tokens require input_units and output_units")
+            return self._rates.points_for_tokens(
+                model_id, quantity.input_units, quantity.output_units
+            )
+        if quantity.units is None:
+            raise InvalidUsageArgument("units must be a number")
+        return self._rates.points_for(model_id, unit_kind, quantity.units)
 
     def _settle_less(
         self,
@@ -328,6 +353,7 @@ class PointsUsageSink:
         except InsufficientPoints:
             for hold_id in state.hold_ids:
                 self._engine.apply_consume_settle(hold_id)
+            self._write_shortfall_audit(state)
             shortfall = UsageShortfall(
                 request_id=state.request_id,
                 account_id=state.account_id,
@@ -351,6 +377,21 @@ class PointsUsageSink:
         state.estimated = estimated
         state.status = "settled"
         return self._result(state)
+
+    def _write_shortfall_audit(self, state: _RequestState) -> None:
+        if not state.hold_ids:
+            return
+        hold = self._engine.get_hold(state.hold_ids[0])
+        lot_id = hold.slices[0].lot_id if hold.slices else None
+        if lot_id is None:
+            return
+        self._engine.record_usage_shortfall(
+            owner_id=state.account_id,
+            key=f"{state.request_id}:usage_shortfall",
+            lot_id=lot_id,
+            hold_id=hold.id,
+            ref=state.request_id,
+        )
 
     def _release_held(self, state: _RequestState) -> None:
         for hold_id in state.hold_ids:
@@ -415,20 +456,59 @@ def _event_key(event: UsageEvent) -> tuple[str, str]:
     )
 
 
-def _resolve_units(event: UsageEvent) -> tuple[Decimal, bool]:
+@dataclass(frozen=True)
+class _Quantity:
+    units: Decimal | None
+    input_units: Decimal | None
+    output_units: Decimal | None
+    estimated: bool
+
+    @property
+    def points_units(self) -> Decimal:
+        if self.input_units is not None and self.output_units is not None:
+            return self.input_units + self.output_units
+        return self.units if self.units is not None else Decimal(0)
+
+
+def _resolve_quantity(event: UsageEvent) -> _Quantity:
+    if not isinstance(event, UsageEvent):
+        raise InvalidUsageArgument("event must be a UsageEvent")
+    if _require_text(event.unit_kind, "unit_kind") == "tokens":
+        if event.input_units is None or event.output_units is None:
+            raise InvalidUsageArgument(
+                "tokens require input_units and output_units; "
+                "total-only units and conservative max(in,out) rates are abolished"
+            )
+        incoming = _as_nonneg_decimal(event.input_units, "input_units")
+        outgoing = _as_nonneg_decimal(event.output_units, "output_units")
+        return _Quantity(
+            units=None,
+            input_units=incoming,
+            output_units=outgoing,
+            estimated=False,
+        )
     if event.units is None:
-        return Decimal(1), True
-    if isinstance(event.units, bool) or not isinstance(event.units, (int, float, Decimal)):
-        raise InvalidUsageArgument("units must be a number")
-    if isinstance(event.units, Decimal):
-        amount = event.units
-    elif isinstance(event.units, int):
-        amount = Decimal(event.units)
+        return _Quantity(units=Decimal(1), input_units=None, output_units=None, estimated=True)
+    return _Quantity(
+        units=_as_nonneg_decimal(event.units, "units"),
+        input_units=None,
+        output_units=None,
+        estimated=False,
+    )
+
+
+def _as_nonneg_decimal(value: int | float | Decimal, field: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise InvalidUsageArgument(f"{field} must be a number")
+    if isinstance(value, Decimal):
+        amount = value
+    elif isinstance(value, int):
+        amount = Decimal(value)
     else:
-        amount = Decimal(str(event.units))
+        amount = Decimal(str(value))
     if amount < 0:
-        raise InvalidUsageArgument("units must be >= 0")
-    return amount, False
+        raise InvalidUsageArgument(f"{field} must be >= 0")
+    return amount
 
 
 def _require_billing(billing: str) -> BillingMode:
@@ -458,6 +538,8 @@ def _payload(
     points: int,
     estimated: bool,
     skipped_reason: str | None,
+    input_units: Decimal | None = None,
+    output_units: Decimal | None = None,
 ) -> str:
     raw = json.dumps(
         {
@@ -468,8 +550,16 @@ def _payload(
             "points": points,
             "estimated": estimated,
             "skipped_reason": skipped_reason,
+            "input_units": _json_num(input_units),
+            "output_units": _json_num(output_units),
         },
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
     return hashlib.sha256(raw).hexdigest()
+
+
+def _json_num(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return format(value, "f")
