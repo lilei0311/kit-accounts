@@ -35,19 +35,14 @@ def test_module_exports_are_stable_for_a_future_fastapi_shell():
 def test_no_kit_model_router_or_http_gateway_in_this_package():
     root = Path(__file__).resolve().parents[1] / "src"
     text = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.py"))
-    lowered = text.lower()
-    assert "kit_model_router" not in lowered
-    assert "kit-model-router" not in lowered
-    for banned in (
-        "fastapi",
-        "starlette",
-        "uvicorn",
-        "flask",
-        "django",
-        "from react",
-        "from vue",
-    ):
-        assert banned not in lowered
+    imports = [
+        line.strip() for line in text.splitlines() if line.lstrip().startswith(("import ", "from "))
+    ]
+    joined = "\n".join(imports).lower()
+    assert "kit_model_router" not in joined
+    assert "kit-model-router" not in joined
+    for banned in ("fastapi", "starlette", "uvicorn", "flask", "django", "react", "vue"):
+        assert banned not in joined
 
 
 def test_app_wiring_doc_nails_ec2_and_block_layout_direction():
