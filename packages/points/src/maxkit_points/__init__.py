@@ -1,4 +1,10 @@
-"""Consume-track points ledger: grant, hold, release, consume settle, expire."""
+"""Consume-track points ledger: grant, hold, release, consume settle, expire.
+
+Stable verbs for a future FastAPI thin shell (this repo does not start HTTP):
+``PointsEngine.apply_hold`` (idempotency ``key``), ``apply_consume_settle``,
+and ``apply_release``. There is no ``settle`` alias — yangong contest-track
+``applySettle`` is a different verb.
+"""
 
 from maxkit_points.constants import PAID_TIER_ORIGINS
 from maxkit_points.engine import PointsEngine
