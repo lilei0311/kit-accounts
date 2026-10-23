@@ -17,10 +17,11 @@ from maxkit_points.errors import (
     PointsError,
 )
 from maxkit_points.ledger import rebuild_lots
-from maxkit_points.models import Balance, Entry, Hold, HoldSlice, PointLot
+from maxkit_points.models import ENTRY_KINDS, Balance, Entry, Hold, HoldSlice, PointLot
 from maxkit_points.store import MemoryPointsStore, PointsStore
 
 __all__ = [
+    "ENTRY_KINDS",
     "PAID_TIER_ORIGINS",
     "Balance",
     "Entry",

@@ -292,6 +292,54 @@ class PointsEngine:
             self._store.save_hold(hold)
             return hold
 
+    def record_usage_shortfall(
+        self,
+        *,
+        owner_id: str,
+        key: str,
+        lot_id: str,
+        hold_id: str | None = None,
+        ref: str | None = None,
+    ) -> Entry:
+        """Append a delta-0 ``usage_shortfall`` audit. Does not change ``opened``.
+
+        Formal ledger kind (kit-meter §7⑧ / usage-points policy §5). Replay of
+        ``key`` returns the existing line. This is not an overdraft.
+        """
+
+        owner = _require_text(owner_id, "owner_id")
+        entry_key = _require_text(key, "key")
+        target_lot = _require_text(lot_id, "lot_id")
+        external_ref = _optional_text(ref, "ref")
+        supplied_hold = _optional_text(hold_id, "hold_id") if hold_id is not None else None
+        with self._store.transaction():
+            existing = self._store.get_entry_by_key(entry_key)
+            if existing is not None:
+                if existing.kind != "usage_shortfall" or existing.owner_id != owner:
+                    raise IdempotencyConflict(entry_key)
+                return existing
+            lot = self._must_lot(target_lot)
+            if lot.owner_id != owner:
+                raise InvalidPointsArgument(f"lot {lot.id} does not belong to owner {owner}")
+            if supplied_hold is not None:
+                hold = self._must_hold(supplied_hold)
+                if hold.owner_id != owner:
+                    raise InvalidPointsArgument(f"hold {hold.id} does not belong to owner {owner}")
+            now = self._now()
+            entry = self._build_entry(
+                owner_id=owner,
+                lot_id=lot.id,
+                hold_id=supplied_hold,
+                kind="usage_shortfall",
+                delta=0,
+                ref=external_ref,
+                key=entry_key,
+                lot_expires_at=lot.expires_at,
+                now=now,
+            )
+            self._commit_entry(entry)
+            return entry
+
     def apply_consume_settle(self, hold_id: str) -> Hold:
         """Close a hold as consumed.
 

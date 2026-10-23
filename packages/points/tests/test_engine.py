@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from maxkit_points import (
+    ENTRY_KINDS,
     PAID_TIER_ORIGINS,
     IdempotencyConflict,
     InsufficientPoints,
@@ -29,6 +30,8 @@ def test_import_surface_is_consume_track():
     assert "winner_id" not in inspect.signature(PointsEngine.apply_consume_settle).parameters
     assert not hasattr(PointsEngine, "apply_settle")
     assert not hasattr(PointsEngine, "settle")
+    assert hasattr(PointsEngine, "record_usage_shortfall")
+    assert "usage_shortfall" in ENTRY_KINDS
     assert PAID_TIER_ORIGINS == frozenset({"subscription_grant", "admin_adjustment", "earned"})
 
 
@@ -158,6 +161,39 @@ def test_consume_settle_does_not_move_opened_or_rebuild_a_payee_lot():
     rebuilt = rebuild_lots(engine.entries("p1"))
     assert len(rebuilt) == 1
     assert rebuilt[0].opened == 0
+    assert engine.balances_match_ledger("p1")
+
+
+def test_usage_shortfall_is_audit_only_not_overdraft():
+    engine = PointsEngine(clock=lambda: datetime(2026, 10, 16, tzinfo=UTC))
+    lot = engine.apply_grant(owner_id="p1", amount=80, key="g1", lot_id="lot1")
+    hold = engine.apply_hold(owner_id="p1", amount=40, key="h1", hold_id="hold1")
+    engine.apply_consume_settle(hold.id)
+    opened_before = engine.get_lot(lot.id).opened
+    available_before = engine.available("p1")
+    entry = engine.record_usage_shortfall(
+        owner_id="p1",
+        key="req-1:usage_shortfall",
+        lot_id=lot.id,
+        hold_id=hold.id,
+        ref="req-1",
+    )
+    assert entry.kind == "usage_shortfall"
+    assert entry.delta == 0
+    assert entry.ref == "req-1"
+    assert engine.get_lot(lot.id).opened == opened_before
+    assert engine.available("p1") == available_before
+    again = engine.record_usage_shortfall(
+        owner_id="p1",
+        key="req-1:usage_shortfall",
+        lot_id=lot.id,
+        hold_id=hold.id,
+        ref="req-1",
+    )
+    assert again.id == entry.id
+    assert [item.kind for item in engine.entries("p1")].count("usage_shortfall") == 1
+    rebuilt = rebuild_lots(engine.entries("p1"))
+    assert rebuilt[0].opened == engine.get_lot(lot.id).opened
     assert engine.balances_match_ledger("p1")
 
 

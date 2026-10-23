@@ -20,17 +20,27 @@ from maxkit_usage_bridge import (
 engine = PointsEngine(store=app_points_store)          # app implements PointsStore
 rates = RateTable.from_snapshot()                      # or inject app-owned cards
 # rates = RateTable(rates={(model_id, unit_kind): yuan_per_unit})
+# tokens: (model_id, "tokens", "in"|"out") → yuan_per_token; non-tokens stay (model_id, unit_kind)
 sink = PointsUsageSink(engine, rates)                  # app injects the sink
 
 person = identity.require_person(session_token)
-event = UsageEvent(model_id=..., modality="text", units=estimated, unit_kind="tokens")
+event = UsageEvent(
+    model_id=...,
+    modality="text",
+    units=None,
+    unit_kind="tokens",
+    input_units=estimated_in,
+    output_units=estimated_out,
+)
 
 # 1) hold before the vendor call — idempotency_key = request_id
 held = sink.hold(event, account_id=person.id, request_id=request_id, billing="platform")
 # billing != "platform" (BYOK) → no-op; missing rate card → refuse; insufficient → raise
 
 # 2) kit-model-router (imported only by the app, never by this kit) emits UsageEvent
-# 3) success → settle to actual units (over-hold release Δ / under-hold top-up then settle)
+# 3) success → settle to actual Meter I/O (over-hold release Δ / under-hold top-up then settle)
+#    tokens: points = ceil(input_units × rate_in + output_units × rate_out)
+#    top-up still short → settle held + usage_shortfall audit (delta 0, no overdraft)
 #    failure → sink.release(account_id=person.id, request_id=request_id)
 
 # Direct ledger verbs stay stable if the app already has a point amount:
@@ -40,7 +50,7 @@ held = sink.hold(event, account_id=person.id, request_id=request_id, billing="pl
 # There is no PointsEngine.settle alias (contest-track applySettle is a different verb).
 ```
 
-`UsageEvent` 本身只有 `model_id` / `modality` / `units` / `unit_kind`。`account_id` 与 `request_id` 由应用上下文传入 Sink。tokens v0 仍是单 `units` 字段，价表用 `max(input, output) / 1e6` 保守折算；进/出拆分不在本仓。
+`UsageEvent` 有 `model_id` / `modality` / `unit_kind`，tokens 必填 `input_units` + `output_units`，非 tokens 用 `units`。`account_id` 与 `request_id` 由应用上下文传入 Sink。RateTable tokens 是 in/out 两键，与 dual-ledger §0.3 同形；禁止保守单腿 / `max(in,out)` / 仅合计。kit-meter points-contract 符号：`task_hold` 负、`task_release` 正、`task_settlement` 消费结算为零额净调整审计、`usage_shortfall` 正式审计 kind（不作透支）。
 
 ## 组件式布局（日后 HTTP 形态 · 本 PR 只钉方向）
 
