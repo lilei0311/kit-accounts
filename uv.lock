@@ -10,6 +10,7 @@ members = [
     "maxkit-identity",
     "maxkit-points",
     "maxkit-s1",
+    "maxkit-usage-bridge",
 ]
 
 [[package]]
@@ -76,6 +77,7 @@ dependencies = [
     { name = "maxkit-identity" },
     { name = "maxkit-points" },
     { name = "maxkit-s1" },
+    { name = "maxkit-usage-bridge" },
 ]
 
 [package.dev-dependencies]
@@ -91,6 +93,7 @@ requires-dist = [
     { name = "maxkit-identity", editable = "packages/identity" },
     { name = "maxkit-points", editable = "packages/points" },
     { name = "maxkit-s1", editable = "packages/s1" },
+    { name = "maxkit-usage-bridge", editable = "packages/usage_bridge" },
 ]
 
 [package.metadata.requires-dev]
@@ -147,6 +150,17 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pyyaml", specifier = ">=6.0.2" }]
+
+[[package]]
+name = "maxkit-usage-bridge"
+version = "0.1.0"
+source = { editable = "packages/usage_bridge" }
+dependencies = [
+    { name = "maxkit-points" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "maxkit-points", editable = "packages/points" }]
 
 [[package]]
 name = "packaging"

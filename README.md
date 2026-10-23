@@ -1,6 +1,8 @@
 # kit-py
 
-MaxStorm 公开 Python monorepo（`maxkit-*`）。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位，以及 S1 L1 格式检查。本阶段**不**发布到 PyPI；源码在 GitHub 公开仓库。
+MaxStorm 公开 Python monorepo（`maxkit-*`）。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位、用量→积分桥，以及 S1 L1 格式检查。本阶段**不**发布到 PyPI；源码在 GitHub 公开仓库。
+
+日后 EC2 薄壳怎么 import 本仓、以及 HTTP 按区块而不是整页挂，见 [docs/app-wiring.md](docs/app-wiring.md)。本仓不起 HTTP 网关，也不实现 UI / block catalog。
 
 ## 包边界
 
@@ -9,10 +11,11 @@ MaxStorm 公开 Python monorepo（`maxkit-*`）。Phase 1–2 放可 import 的�
 | `maxkit-contracts` | `maxkit_contracts` | Person / Org / PointLot / Entry / Hold 的 JSON Schema，以及积分 golden vectors | `jsonschema` |
 | `maxkit-identity` | `maxkit_identity` | Person、Org、验证码、Session、外部身份连接器口 | `maxkit-contracts` |
 | `maxkit-points` | `maxkit_points` | 消费轨 lot + 带符号 entry + hold | `maxkit-contracts` |
+| `maxkit-usage-bridge` | `maxkit_usage_bridge` | UsageEvent → RateTable → hold/settle/release；内部价表快照 | `maxkit-points` |
 | `maxkit-guard` | `maxkit_guard` | 进程内固定窗口限流占位 | 无 |
 | `maxkit-s1` | `maxkit_s1` | S1 L1 英→中旁白格式契约检查（预设 A/B） | `pyyaml` |
 
-依赖方向是 contracts ← identity、contracts ← points。identity 与 points **互不 import**。`maxkit_s1` 不 import 其他 maxkit 包。积分引擎里的 `owner_id` 是不透明字符串；应用先用 identity 解析出 Person 或 Org，再把 id 交给 points。
+依赖方向是 contracts ← identity、contracts ← points ← usage-bridge。identity 与 points **互不 import**。`maxkit_s1` 不 import 其他 maxkit 包。本仓 **永不 import kit-model-router**（价表是 STATIC_CARDS 字段的冻结快照，或由 app 注入）。积分引擎里的 `owner_id` 是不透明字符串；应用先用 identity 解析出 Person 或 Org，再把 id 交给 points / usage bridge。
 
 ## S1 L1（英→中旁白格式）
 
@@ -49,6 +52,16 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 - 同一 owner 可以同时有多笔 `held`。幂等按 hold key，不按任务 id 去重。
 - 产品 SKU 价格留在应用里。引擎只收点数 `amount`。需要审计时把外部 id 放进 `ref`。
 - 存储是内存里的 `PointsStore`。SQLAlchemy 不在本阶段。
+- 稳定调用面（供日后 FastAPI 薄壳直接 import，本仓不起 HTTP）：`apply_hold`（幂等 `key`）、`apply_consume_settle`、`apply_release`。没有 `settle` 别名，以免和竞赛轨 `applySettle` 混淆。
+
+## 用量 → 积分桥
+
+`maxkit_usage_bridge` 把应用层的 `UsageEvent` 换成消费轨预扣。`POINTS_PER_YUAN = 100` 是内部成本当量常数，不是对外 SKU 价。价表键是 `(model_id, unit_kind)` → `yuan_per_unit`，字段名来自 kit-model-router `STATIC_CARDS` 的冻结拷贝（`price_per_million_*` / `price_per_image_yuan` / `price_per_clip_yuan` / `price_per_1k_chars_yuan`），不是 live import。
+
+- 计费 unit：`tokens` / `images` / `clips` / `chars`。`seconds` 不计。`billing=platform` 才扣；BYOK 默认跳过。无价格卡则拒绝平台计费。
+- `points = ceil(units × yuan_per_unit × 100)`，有用量最少 1 分。tokens v0 用单 `units` 和保守 `max(input, output)/1e6`。
+- Sink：调用前 `hold`（`idempotency_key=request_id`），成功 `settle` 到实际（多退少补），失败 `release`。分录仍是 `task_hold` / `task_settlement` / `task_release`。
+- 应用注入 Sink，并传入 `account_id` / `request_id`。库本身不是计费网关。接线说明见 [docs/app-wiring.md](docs/app-wiring.md)。
 
 ## 身份语义
 
@@ -73,6 +86,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 - SQLAlchemy / 真 ORM。应用自己实现 `PointsStore` 之前，用内存适配。
 - 不改 story-clip，也不让它 import 本仓。
 - 无支付适配、无真实用户、无密钥。
+- 不建 `app-maxstorm-api`、不上 EC2、不起 HTTP 网关。组件式布局（`type` + `props` + `slots`/`children`）只在接线文档里钉方向，本仓不实现 block catalog / React / Vue。
 
 ## 本阶段不做
 
@@ -85,7 +99,8 @@ uv sync
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
-uv run python -c "import maxkit_points, maxkit_identity, maxkit_s1"
+uv run python -c "import maxkit_points, maxkit_identity, maxkit_s1, maxkit_usage_bridge"
+uv run python -m maxkit_usage_bridge
 uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable bilingual.txt
 ```
 
@@ -94,6 +109,6 @@ CI（`.github/workflows/ci.yml`）跑同一组命令，并使用已提交的 `uv
 ## 验收对照
 
 - [x] 公有仓可 `uv sync`，CI 跑 pytest + ruff
-- [x] `import maxkit_points` / `import maxkit_identity` 可在隔离烟测里通过
+- [x] `import maxkit_points` / `import maxkit_identity` / `import maxkit_usage_bridge` 可在隔离烟测里通过
 - [x] golden vectors 锁消费轨（opened、带符号分录、零额 consume settle）；竞赛轨用例列在向量文件的 `excluded` 里，不执行
 - [x] 无密钥、无真实用户数据

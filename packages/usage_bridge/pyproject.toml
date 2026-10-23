@@ -1,0 +1,21 @@
+[project]
+name = "maxkit-usage-bridge"
+version = "0.1.0"
+description = "UsageEvent to consume-track points bridge: RateTable plus hold/settle/release sink."
+requires-python = ">=3.11"
+dependencies = [
+  "maxkit-points>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/maxkit_usage_bridge"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
+[tool.uv.sources]
+maxkit-points = { workspace = true }
