@@ -1,7 +1,7 @@
 {
   "version": 2,
   "track": "consume",
-  "provenance": "Consume-track golden vectors for kit-py. Derived from yangong points.test.ts cases that exercise grant, hold, release, expiry, FEFO, idempotency, and insufficient balance, plus app-story-clip consume settle (hold marked settled, zero-delta task_settlement audit, opened not restored, no winner grant). Lot figures that yangong stores by shrinking amount are opened here; amount stays the original grant. Contest-track payouts are listed under excluded and are not executed. Subscription calendars and mixed-org tenancy stay out of the engine. Alignment notes: kit-py-golden-gap-2026-10-18. Product SKU prices are not part of these vectors.",
+  "provenance": "Consume-track golden vectors for kit-accounts. Derived from yangong points.test.ts cases that exercise grant, hold, release, expiry, FEFO, idempotency, and insufficient balance, plus app-story-clip consume settle (hold marked settled, zero-delta task_settlement audit, opened not restored, no winner grant). Lot figures that yangong stores by shrinking amount are opened here; amount stays the original grant. Contest-track payouts are listed under excluded and are not executed. Subscription calendars and mixed-org tenancy stay out of the engine. Alignment notes: kit-py-golden-gap-2026-10-18. Product SKU prices are not part of these vectors.",
   "excluded": [
     {
       "id": "yangong_1_contest_payout",
@@ -26,7 +26,7 @@
   ],
   "out_of_scope": [
     "yangong points.test.ts cases 8-9: subscription renewal and daily-claim schedule are product policy, not the ledger.",
-    "yangong points.test.ts case 54: mixed-org tenancy. kit-py isolates balances by owner_id; org membership stays in identity."
+    "yangong points.test.ts case 54: mixed-org tenancy. kit-accounts isolates balances by owner_id; org membership stays in identity."
   ],
   "cases": [
     {

@@ -1,6 +1,6 @@
-# kit-py
+# kit-accounts
 
-MaxStorm 公开 Python monorepo（`maxkit-*`）。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位、用量→积分桥，以及 S1 L1 格式检查。本阶段**不**发布到 PyPI；源码在 GitHub 公开仓库。
+`kit-accounts` 是 MaxStorm 公开的账号与积分 Python kit（`maxkit-*`）。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位、用量→积分桥，以及 S1 L1 格式检查。本阶段**不**发布到 PyPI；源码在 GitHub 公开仓库。
 
 日后 EC2 薄壳怎么 import 本仓、以及 HTTP 按区块而不是整页挂，见 [docs/app-wiring.md](docs/app-wiring.md)。本仓不起 HTTP 网关，也不实现 UI / block catalog。
 

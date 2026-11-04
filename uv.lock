@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
-    "kit-py",
+    "kit-accounts",
     "maxkit-contracts",
     "maxkit-guard",
     "maxkit-identity",
@@ -68,7 +68,7 @@ wheels = [
 ]
 
 [[package]]
-name = "kit-py"
+name = "kit-accounts"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
