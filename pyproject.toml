@@ -1,7 +1,7 @@
 [project]
-name = "kit-py"
+name = "kit-accounts"
 version = "0.1.0"
-description = "MaxStorm private Python workspace for shared contracts, identity, and points."
+description = "MaxStorm public Python kit for accounts and points (kit-accounts, maxkit-*)."
 requires-python = ">=3.11"
 dependencies = [
   "maxkit-contracts",
