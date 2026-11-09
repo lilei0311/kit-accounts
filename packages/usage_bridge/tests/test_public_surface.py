@@ -32,6 +32,7 @@ def test_module_exports_are_stable_for_a_future_fastapi_shell():
         "unit_kind",
         "input_units",
         "output_units",
+        "estimated",
     }
 
 

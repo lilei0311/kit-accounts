@@ -7,6 +7,11 @@ dependencies = [
   "maxkit-contracts>=0.1.0",
 ]
 
+[project.optional-dependencies]
+postgres = [
+  "psycopg[binary]>=3.2",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -16,6 +21,9 @@ only-include = ["src/maxkit_points"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src" = ""
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/maxkit_points/migrations" = "maxkit_points/migrations"
 
 [tool.uv.sources]
 maxkit-contracts = { workspace = true }

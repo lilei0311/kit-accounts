@@ -17,7 +17,16 @@ from maxkit_usage_bridge.constants import POINTS_PER_YUAN
 Modality = Literal["text", "image", "video", "tts"]
 UnitKind = Literal["tokens", "images", "clips", "chars", "seconds"]
 BillingMode = Literal["platform", "byok"]
-BillingStatus = Literal["held", "settled", "released", "skipped", "shortfall"]
+BillingStatus = Literal[
+    "pending_config",
+    "held",
+    "settled",
+    "released",
+    "cancelled",
+    "rejected",
+    "shortfall",
+    "skipped",
+]
 
 
 @dataclass(frozen=True)
@@ -28,6 +37,10 @@ class UsageEvent:
     unit_kind: str
     input_units: int | float | Decimal | None = None
     output_units: int | float | Decimal | None = None
+    # Meter provenance: when the eventual Hub adapter arrives, pass through
+    # meter.estimated as-is. None keeps prior derivation (tokens false;
+    # missing non-token units true).
+    estimated: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -75,3 +88,7 @@ class BillingResult:
     shortfall_points: int = 0
     skipped_reason: str | None = None
     points_per_yuan: int = POINTS_PER_YUAN
+    reject_reason: str | None = None
+    available_after: int | None = None
+    snapshot_ref: str | None = None
+    effect: dict[str, object] | None = None
