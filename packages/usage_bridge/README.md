@@ -30,9 +30,10 @@ only, not an overdraft).
 
 `MeterEventAdapter` maps the frozen Hub callback envelope
 (`task_hold` / `task_settlement` / `task_release`) onto this sink. It is a
-library mapper for local fixtures: **not** an HTTP gateway, **not** an
-outbox, **not** a claim that Hub delivery exists. `event_id` is transport
-only; accounting stays on `request_id`. See
+library mapper: **not** an outbox, **not** a claim that Hub delivery
+exists. Local/staging HTTP (`POST /internal/v0/meter-events`) lives in
+`maxkit_internal_http`. `event_id` is transport only; accounting stays on
+`request_id`. See
 [`docs/hub-points-callback.md`](../../docs/hub-points-callback.md).
 
 ```bash

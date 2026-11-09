@@ -1,8 +1,8 @@
 # App / EC2 接线（本仓只留调用面）
 
-本页给日后 EC2 薄壳（FastAPI 等）看。**本 PR 不建 API 仓、不部署 EC2、不起 HTTP 网关、不实现真实 UI。**
+本页给日后 EC2 薄壳（FastAPI 等）看。**本仓不建 API 仓、不部署 EC2、不实现真实 UI。** 本地/预发计量回调入站（`POST /internal/v0/meter-events`）在 `maxkit_internal_http`，见 [hub-points-callback.md](hub-points-callback.md)。
 
-两库 **互不 import**：`kit-accounts` 永不 import `kit-model-router`；`kit-model-router` 永不 import `kit-accounts`。网关 / HTTP 面只在未来 app 仓，不进 kit。RateTable 是内部成本当量，不是对外 SKU 价。
+两库 **互不 import**：`kit-accounts` 永不 import `kit-model-router`；`kit-model-router` 永不 import `kit-accounts`。生产网关 / 区块 HTTP 面仍在未来 app 仓。RateTable 是内部成本当量，不是对外 SKU 价。
 
 ## 日后薄壳怎么挂（伪代码）
 
@@ -15,7 +15,7 @@ from maxkit_points import PointsEngine, MemoryPointsStore
 # store = PostgresPointsStore.from_env()  # MAXKIT_POINTS_DSN / MAXKIT_POINTS_SCHEMA
 from maxkit_usage_bridge import (
     POINTS_PER_YUAN,   # 100; config constant, not a public price
-    MeterEventAdapter,  # Hub envelope → sink; library only, no HTTP
+    MeterEventAdapter,  # Hub envelope → sink; library mapper
     PointsUsageSink,
     RateTable,
     UsageEvent,
@@ -30,8 +30,9 @@ adapter = MeterEventAdapter(sink)                      # inbound mapping only
 # Hold freezes a local rate snapshot; settle/release use it (no silent reprice).
 # Release-before-hold writes cancelled tombstone; late hold cannot debit.
 # See docs/postgres-points.md and docs/hub-points-callback.md.
-# MeterEventAdapter is the frozen-contract mapper. This kit still does NOT
-# serve POST /internal/v0/meter-events, outbox, or Hub push.
+# MeterEventAdapter is the frozen-contract mapper.
+# Local/staging HTTP: maxkit_internal_http serves POST /internal/v0/meter-events.
+# Still no outbox, no Hub push, no production deploy.
 
 person = identity.require_person(session_token)
 event = UsageEvent(

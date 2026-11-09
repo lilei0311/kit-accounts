@@ -1,8 +1,8 @@
 # kit-accounts
 
-`kit-accounts` 是 MaxStorm 公开的账号与积分 Python kit（`maxkit-*`）。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位、用量→积分桥，以及 S1 L1 格式检查。本阶段**不**发布到 PyPI；源码在 GitHub 公开仓库。
+`kit-accounts` 是 MaxStorm 公开的账号与积分 Python kit（`maxkit-*`）。Phase 1–2 放可 import 的积木：契约、身份、积分、限流占位、用量→积分桥、S1 L1 格式检查，以及本地/预发计量回调 HTTP 薄壳。本阶段**不**发布到 PyPI；源码在 GitHub 公开仓库。
 
-日后 EC2 薄壳怎么 import 本仓、以及 HTTP 按区块而不是整页挂，见 [docs/app-wiring.md](docs/app-wiring.md)。本仓不起 HTTP 网关，也不实现 UI / block catalog。
+日后 EC2 薄壳怎么 import 本仓、以及 HTTP 按区块而不是整页挂，见 [docs/app-wiring.md](docs/app-wiring.md)。本仓**不**实现 UI / block catalog，也**不**部署生产网关。本地/预发入站是 `POST /internal/v0/meter-events`，见 [docs/hub-points-callback.md](docs/hub-points-callback.md)。
 
 ## 包边界
 
@@ -11,11 +11,12 @@
 | `maxkit-contracts` | `maxkit_contracts` | Person / Org / PointLot / Entry / Hold 的 JSON Schema，以及积分 golden vectors | `jsonschema` |
 | `maxkit-identity` | `maxkit_identity` | Person、Org、验证码、Session、外部身份连接器口 | `maxkit-contracts` |
 | `maxkit-points` | `maxkit_points` | 消费轨 lot + 带符号 entry + hold | `maxkit-contracts` |
-| `maxkit-usage-bridge` | `maxkit_usage_bridge` | UsageEvent → RateTable → hold/settle/release；内部价表快照 | `maxkit-points` |
+| `maxkit-usage-bridge` | `maxkit_usage_bridge` | UsageEvent → RateTable → hold/settle/release；内部价表快照；Hub 信封 Adapter | `maxkit-points` |
+| `maxkit-internal-http` | `maxkit_internal_http` | 本地/预发 `POST /internal/v0/meter-events`；Bearer + `credential_id` | `maxkit-usage-bridge`、Starlette |
 | `maxkit-guard` | `maxkit_guard` | 进程内固定窗口限流占位 | 无 |
 | `maxkit-s1` | `maxkit_s1` | S1 L1 英→中旁白格式契约检查（预设 A/B） | `pyyaml` |
 
-依赖方向是 contracts ← identity、contracts ← points ← usage-bridge。identity 与 points **互不 import**。`maxkit_s1` 不 import 其他 maxkit 包。本仓 **永不 import kit-model-router**（价表是 STATIC_CARDS 字段的冻结快照，或由 app 注入）。积分引擎里的 `owner_id` 是不透明字符串；应用先用 identity 解析出 Person 或 Org，再把 id 交给 points / usage bridge。
+依赖方向是 contracts ← identity、contracts ← points ← usage-bridge ← internal-http。identity 与 points **互不 import**。`maxkit_s1` 不 import 其他 maxkit 包。本仓 **永不 import kit-model-router**（价表是 STATIC_CARDS 字段的冻结快照，或由 app 注入）。积分引擎里的 `owner_id` 是不透明字符串；应用先用 identity 解析出 Person 或 Org，再把 id 交给 points / usage bridge。
 
 ## S1 L1（英→中旁白格式）
 
@@ -52,7 +53,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 - 同一 owner 可以同时有多笔 `held`。幂等按 hold key，不按任务 id 去重。
 - 产品 SKU 价格留在应用里。引擎只收点数 `amount`。需要审计时把外部 id 放进 `ref`。
 - 存储口是 `PointsStore`：默认 `MemoryPointsStore`；可选 `PostgresPointsStore`（schema `points`，见 [docs/postgres-points.md](docs/postgres-points.md)）。SQLAlchemy 仍不引入。运行时只用最少权限 DSN，**不**在启动时跑 DDL。
-- 稳定调用面（供日后 FastAPI 薄壳直接 import，本仓不起 HTTP）：`apply_hold`（幂等 `key`）、`apply_consume_settle`、`apply_release`。没有 `settle` 别名，以免和竞赛轨 `applySettle` 混淆。
+- 稳定调用面（HTTP 薄壳与日后 app 直接 import）：`apply_hold`（幂等 `key`）、`apply_consume_settle`、`apply_release`。没有 `settle` 别名，以免和竞赛轨 `applySettle` 混淆。
 
 ## 用量 → 积分桥
 
@@ -63,7 +64,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 - 非 tokens：键仍是 `(model_id, unit_kind)` → `yuan_per_unit`；`points = ceil(units × yuan_per_unit × 100)`，有用量最少 1 分。
 - Sink：调用前 `hold`（`idempotency_key=request_id`），成功 `settle` 到实际（多退少补），失败 `release`。补 hold 仍不足时 settle 已 hold 部分，并写正式 `usage_shortfall` 审计分录（delta 0，不作透支）。
 - 应用注入 Sink，并传入 `account_id` / `request_id`。库本身不是计费网关。接线说明见 [docs/app-wiring.md](docs/app-wiring.md)。
-- Hub 回调入站：`MeterEventAdapter` 按联调冻结信封把 `task_hold` / `task_settlement` / `task_release` 映射到 Sink。这是本地适配 + 夹具证据，**不是** HTTP 服务、**不是** outbox、**不声称** Hub 已投递。财务键仍是 `request_id`（`event_id` 只是运输身份）。见 [docs/hub-points-callback.md](docs/hub-points-callback.md)。
+- Hub 回调入站：`MeterEventAdapter` 按联调冻结信封把 `task_hold` / `task_settlement` / `task_release` 映射到 Sink。财务键仍是 `request_id`（`event_id` 只是运输身份）。`maxkit_internal_http` 在本地/预发提供 `POST /internal/v0/meter-events`（`Authorization: Bearer` + 头 `credential_id`；环境变量 `POINTS_METER_CALLBACK_TOKEN` / `POINTS_METER_CALLBACK_CREDENTIAL_ID`）。**不是** outbox、**不声称** Hub 已可靠投递、**不**用客户 `msk_…` 或 `KIT_METER_API_TOKEN`。见 [docs/hub-points-callback.md](docs/hub-points-callback.md)。
 
 ## 身份语义
 
@@ -88,7 +89,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 - SQLAlchemy / 真 ORM。应用可用 `MemoryPointsStore` 或可选 `PostgresPointsStore`（迁移由 ops DDL 身份执行）。
 - 不改 story-clip，也不让它 import 本仓。
 - 无支付适配、无真实用户、无密钥。
-- 不建 `app-maxstorm-api`、不上 EC2、不起 HTTP 网关。组件式布局（`type` + `props` + `slots`/`children`）只在接线文档里钉方向，本仓不实现 block catalog / React / Vue。
+- 不建 `app-maxstorm-api`、不上 EC2、不部署生产网关。组件式布局（`type` + `props` + `slots`/`children`）只在接线文档里钉方向，本仓不实现 block catalog / React / Vue。本地计量回调薄壳见上。
 
 ## 本阶段不做
 
@@ -101,8 +102,9 @@ uv sync
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
-uv run python -c "import maxkit_points, maxkit_identity, maxkit_s1, maxkit_usage_bridge"
+uv run python -c "import maxkit_points, maxkit_identity, maxkit_s1, maxkit_usage_bridge, maxkit_internal_http"
 uv run python -m maxkit_usage_bridge
+uv run python -m maxkit_internal_http   # needs POINTS_METER_CALLBACK_TOKEN / POINTS_METER_CALLBACK_CREDENTIAL_ID
 uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable bilingual.txt
 ```
 

@@ -8,7 +8,8 @@ Not a delivery claim:
 - Hub hooks are still empty; there is no reliable push in this slice.
 - ``event_id`` is transport identity only. Accounting keys remain
   ``request_id`` (+ ``kind`` for business-result dedupe).
-- Proposed path ``POST /internal/v0/meter-events`` is documented, not served.
+- HTTP serving of ``POST /internal/v0/meter-events`` lives in
+  ``maxkit_internal_http`` (local/staging shell only).
 """
 
 from __future__ import annotations
