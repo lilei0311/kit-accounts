@@ -63,6 +63,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 - 非 tokens：键仍是 `(model_id, unit_kind)` → `yuan_per_unit`；`points = ceil(units × yuan_per_unit × 100)`，有用量最少 1 分。
 - Sink：调用前 `hold`（`idempotency_key=request_id`），成功 `settle` 到实际（多退少补），失败 `release`。补 hold 仍不足时 settle 已 hold 部分，并写正式 `usage_shortfall` 审计分录（delta 0，不作透支）。
 - 应用注入 Sink，并传入 `account_id` / `request_id`。库本身不是计费网关。接线说明见 [docs/app-wiring.md](docs/app-wiring.md)。
+- Hub 回调入站：`MeterEventAdapter` 按联调冻结信封把 `task_hold` / `task_settlement` / `task_release` 映射到 Sink。这是本地适配 + 夹具证据，**不是** HTTP 服务、**不是** outbox、**不声称** Hub 已投递。财务键仍是 `request_id`（`event_id` 只是运输身份）。见 [docs/hub-points-callback.md](docs/hub-points-callback.md)。
 
 ## 身份语义
 
