@@ -15,6 +15,7 @@ from maxkit_points import PointsEngine, MemoryPointsStore
 # store = PostgresPointsStore.from_env()  # MAXKIT_POINTS_DSN / MAXKIT_POINTS_SCHEMA
 from maxkit_usage_bridge import (
     POINTS_PER_YUAN,   # 100; config constant, not a public price
+    MeterEventAdapter,  # Hub envelope → sink; library only, no HTTP
     PointsUsageSink,
     RateTable,
     UsageEvent,
@@ -25,9 +26,12 @@ rates = RateTable.from_snapshot()                      # or inject app-owned car
 # rates = RateTable(rates={(model_id, unit_kind): yuan_per_unit})
 # tokens: (model_id, "tokens", "in"|"out") → yuan_per_token; non-tokens stay (model_id, unit_kind)
 sink = PointsUsageSink(engine, rates)                  # app injects the sink
+adapter = MeterEventAdapter(sink)                      # inbound mapping only
 # Hold freezes a local rate snapshot; settle/release use it (no silent reprice).
 # Release-before-hold writes cancelled tombstone; late hold cannot debit.
-# See docs/postgres-points.md. Hub HTTP callbacks are NOT in this kit yet.
+# See docs/postgres-points.md and docs/hub-points-callback.md.
+# MeterEventAdapter is the frozen-contract mapper. This kit still does NOT
+# serve POST /internal/v0/meter-events, outbox, or Hub push.
 
 person = identity.require_person(session_token)
 event = UsageEvent(

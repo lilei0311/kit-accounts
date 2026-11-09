@@ -28,6 +28,13 @@ Settle top-up that still cannot cover the remainder settles the held
 amount and writes a formal `usage_shortfall` ledger entry (delta 0, audit
 only, not an overdraft).
 
+`MeterEventAdapter` maps the frozen Hub callback envelope
+(`task_hold` / `task_settlement` / `task_release`) onto this sink. It is a
+library mapper for local fixtures: **not** an HTTP gateway, **not** an
+outbox, **not** a claim that Hub delivery exists. `event_id` is transport
+only; accounting stays on `request_id`. See
+[`docs/hub-points-callback.md`](../../docs/hub-points-callback.md).
+
 ```bash
 uv run python -m maxkit_usage_bridge
 ```

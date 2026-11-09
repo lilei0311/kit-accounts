@@ -15,6 +15,7 @@ def test_module_exports_are_stable_for_a_future_fastapi_shell():
     assert hasattr(PointsUsageSink, "hold")
     assert hasattr(PointsUsageSink, "settle")
     assert hasattr(PointsUsageSink, "release")
+    assert hasattr(PointsUsageSink, "engine")
     assert POINTS_PER_YUAN == 100
     for name in (
         "POINTS_PER_YUAN",
@@ -23,6 +24,9 @@ def test_module_exports_are_stable_for_a_future_fastapi_shell():
         "UsageEvent",
         "STATIC_CARD_SNAPSHOT",
         "compute_token_points",
+        "MeterEventAdapter",
+        "parse_meter_event",
+        "SCHEMA_VERSION",
     ):
         assert name in maxkit_usage_bridge.__all__
     assert UsageEvent.__dataclass_fields__.keys() >= {
@@ -71,3 +75,5 @@ def test_app_wiring_doc_nails_ec2_and_block_layout_direction():
     assert "input_units" in doc
     assert "rate_in" in doc
     assert "usage_shortfall" in doc
+    assert "MeterEventAdapter" in doc
+    assert "hub-points-callback.md" in doc

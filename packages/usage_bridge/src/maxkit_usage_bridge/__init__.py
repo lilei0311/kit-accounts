@@ -11,8 +11,17 @@ from maxkit_usage_bridge.constants import BILLABLE_UNIT_KINDS, POINTS_PER_YUAN
 from maxkit_usage_bridge.errors import (
     BillingStateError,
     InvalidUsageArgument,
+    MeterEnvelopeError,
     MissingRateCard,
     UsageBridgeError,
+)
+from maxkit_usage_bridge.inbound import (
+    SCHEMA_VERSION,
+    MeterCallbackAck,
+    MeterEventAdapter,
+    ParsedMeterEvent,
+    expected_event_id,
+    parse_meter_event,
 )
 from maxkit_usage_bridge.models import (
     BillingResult,
@@ -32,13 +41,18 @@ from maxkit_usage_bridge.snapshot import STATIC_CARD_SNAPSHOT
 __all__ = [
     "BILLABLE_UNIT_KINDS",
     "POINTS_PER_YUAN",
+    "SCHEMA_VERSION",
     "STATIC_CARD_SNAPSHOT",
     "BillingResult",
     "BillingStateError",
     "IdempotencyConflict",
     "InsufficientPoints",
     "InvalidUsageArgument",
+    "MeterCallbackAck",
+    "MeterEnvelopeError",
+    "MeterEventAdapter",
     "MissingRateCard",
+    "ParsedMeterEvent",
     "PointsUsageSink",
     "RateTable",
     "StaticCard",
@@ -47,7 +61,9 @@ __all__ = [
     "UsageShortfall",
     "compute_points",
     "compute_token_points",
+    "expected_event_id",
     "freeze_rate_snapshot",
+    "parse_meter_event",
     "points_from_snapshot",
     "verify_snapshot_ref",
 ]

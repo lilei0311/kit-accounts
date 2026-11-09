@@ -88,6 +88,10 @@ class PointsUsageSink:
                 "(MemoryPointsStore / PostgresPointsStore) or pass requests="
             )
 
+    @property
+    def engine(self) -> PointsEngine:
+        return self._engine
+
     def hold(
         self,
         event: UsageEvent,

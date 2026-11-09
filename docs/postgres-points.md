@@ -99,14 +99,18 @@ tables follow the same DML set.
 
 ## What this slice does **not** include
 
-- Hub HTTP callbacks, auth headers, outbox, ACK protocol
+- Serving Hub HTTP (`POST /internal/v0/meter-events`), auth headers, outbox
 - Writes to kit-meter / model-router databases
 - Recharge / purchase_credit / product UI
 - Production deployment or credential handling
 
-## Pending external callback contract must still supply
+Inbound **library** mapping of the frozen callback envelope lives in
+`maxkit_usage_bridge.MeterEventAdapter` (see
+[hub-points-callback.md](hub-points-callback.md)). That adapter is local
+fixture evidence, not a delivery claim: Hub hooks remain empty.
 
-When Hub HTTP lands (later): authenticated delivery, stable retry identity
-separate from `request_id`, raw usage quantities (not points), `billing`,
-optional `snapshot_ref`, `reason` on release, and `meter.estimated`
-provenance. Exact URL/headers/payload serialization remain TBD.
+## Pending Hub-side work before bidirectional 联调
+
+Authenticated push, outbox + CAS choosing a single settle|release,
+parking/manual replay, and service credentials. The accounts adapter
+already consumes the frozen envelope in-process.

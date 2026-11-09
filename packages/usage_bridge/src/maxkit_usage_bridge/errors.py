@@ -24,3 +24,11 @@ class BillingStateError(UsageBridgeError):
         self.request_id = request_id
         self.status = status
         self.action = action
+
+
+class MeterEnvelopeError(InvalidUsageArgument):
+    """Inbound Hub envelope failed validation (HTTP 400 class; no persist)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
