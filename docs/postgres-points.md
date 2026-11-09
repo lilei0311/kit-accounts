@@ -99,15 +99,17 @@ tables follow the same DML set.
 
 ## What this slice does **not** include
 
-- Serving Hub HTTP (`POST /internal/v0/meter-events`), auth headers, outbox
+- Production Hub HTTP, outbox, or real charging
 - Writes to kit-meter / model-router databases
 - Recharge / purchase_credit / product UI
-- Production deployment or credential handling
+- Production deployment or real credential handling
 
 Inbound **library** mapping of the frozen callback envelope lives in
-`maxkit_usage_bridge.MeterEventAdapter` (see
-[hub-points-callback.md](hub-points-callback.md)). That adapter is local
-fixture evidence, not a delivery claim: Hub hooks remain empty.
+`maxkit_usage_bridge.MeterEventAdapter`. Local/staging HTTP
+(`POST /internal/v0/meter-events`, Bearer + `credential_id`) lives in
+`maxkit_internal_http` (see
+[hub-points-callback.md](hub-points-callback.md)). That is not a delivery
+claim: Hub outbox/push and production deploy remain out of scope.
 
 ## Pending Hub-side work before bidirectional 联调
 

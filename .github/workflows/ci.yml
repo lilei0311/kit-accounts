@@ -23,4 +23,4 @@ jobs:
       - name: pytest
         run: uv run pytest
       - name: import smoke
-        run: uv run python -c "import maxkit_identity, maxkit_points, maxkit_s1"
+        run: uv run python -c "import maxkit_identity, maxkit_points, maxkit_s1, maxkit_usage_bridge, maxkit_internal_http"

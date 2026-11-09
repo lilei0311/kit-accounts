@@ -1,7 +1,8 @@
 """UsageEvent → consume-track points bridge.
 
-Public call surface for a future FastAPI thin shell (this repo does not
-start HTTP). Import these names plus ``PointsEngine.apply_hold`` /
+Public call surface for the local HTTP shell and a future app gateway.
+This package itself does not start HTTP — ``maxkit_internal_http`` does.
+Import these names plus ``PointsEngine.apply_hold`` /
 ``apply_consume_settle`` / ``apply_release`` from ``maxkit_points``.
 Never import kit-model-router from this package.
 """
