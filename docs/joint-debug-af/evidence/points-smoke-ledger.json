@@ -1,0 +1,38 @@
+{
+  "billing": {
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "account_id": "acct_joint_debug",
+    "status": "held",
+    "snapshot_ref": "e8be3030414cddc22848cc01134428ce7f1a99d72a69c403a199d1b4132e0a89",
+    "points": 1,
+    "shortfall_points": 0,
+    "reject_reason": null,
+    "available_after": 999999,
+    "effect": {
+      "points": 1,
+      "outcome": "held",
+      "hold_ids": [
+        "hold_00000001"
+      ],
+      "available": 999999,
+      "operation": "hold"
+    },
+    "skipped_reason": null,
+    "billing": "platform",
+    "model_id": "demo-text-v0",
+    "unit_kind": "tokens"
+  },
+  "entries": [
+    {
+      "id": "ent_00000005",
+      "owner_id": "acct_joint_debug",
+      "kind": "task_hold",
+      "delta": -1,
+      "key": "550e8400-e29b-41d4-a716-446655440000:lot_00000002",
+      "ref": "550e8400-e29b-41d4-a716-446655440000",
+      "at": "2026-11-09T23:51:30.681081+00:00"
+    }
+  ],
+  "available": 999999,
+  "held": 1
+}

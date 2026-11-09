@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "body": {
+    "schema_version": "0",
+    "event_id": "evt_hold_550e8400-e29b-41d4-a716-446655440000",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "kind": "task_hold",
+    "result": "applied",
+    "snapshot_ref": "e8be3030414cddc22848cc01134428ce7f1a99d72a69c403a199d1b4132e0a89"
+  }
+}
