@@ -1,0 +1,135 @@
+{
+  "at": "2026-11-09T23:09:34Z",
+  "points_backend": "postgres",
+  "clone": "git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...\nremote: Repository not found.\nfatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found",
+  "meter_repo": null,
+  "kit_meter_pin": "e80920eb",
+  "kit_accounts_head": "963c43197a6ed02ff11e9bc7a5589bec22ba4afc",
+  "env_notes": [
+    "points ledger: local Postgres kit_accounts_joint (schema points)",
+    "git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...\nremote: Repository not found.\nfatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found",
+    "points smoke hold HTTP 200 body={'schema_version': '0', 'event_id': 'evt_hold_550e8400-e29b-41d4-a716-446655440000', 'request_id': '550e8400-e29b-41d4-a716-446655440000', 'kind': 'task_hold', 'result': 'applied', 'snapshot_ref': 'e8be3030414cddc22848cc01134428ce7f1a99d72a69c403a199d1b4132e0a89'}",
+    "points smoke ledger billing={'request_id': '550e8400-e29b-41d4-a716-446655440000', 'account_id': 'acct_joint_debug', 'status': 'held', 'snapshot_ref': 'e8be3030414cddc22848cc01134428ce7f1a99d72a69c403a199d1b4132e0a89', 'points': 1, 'shortfall_points': 0, 'reject_reason': None, 'available_after': 999999, 'effect': {'points': 1, 'outcome': 'held', 'hold_ids': ['hold_00000001'], 'available': 999999, 'operation': 'hold'}, 'skipped_reason': None, 'billing': 'platform', 'model_id': 'demo-text-v0', 'unit_kind': 'tokens'} available=999999 held=1"
+  ],
+  "cases": [
+    {
+      "seq": "A",
+      "title": "正常 hold→start→freeze/settle",
+      "verdict": "FAIL",
+      "attribution": "环境",
+      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "request_id": "",
+      "hub_task": null,
+      "hub_outbox": null,
+      "points_acks": [],
+      "points_billing": null,
+      "points_entries": [],
+      "points_balance": null,
+      "hub_http": [],
+      "hub_issues": [],
+      "notes": []
+    },
+    {
+      "seq": "B",
+      "title": "超时 hold→expire-holds/release",
+      "verdict": "FAIL",
+      "attribution": "环境",
+      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "request_id": "",
+      "hub_task": null,
+      "hub_outbox": null,
+      "points_acks": [],
+      "points_billing": null,
+      "points_entries": [],
+      "points_balance": null,
+      "hub_http": [],
+      "hub_issues": [],
+      "notes": []
+    },
+    {
+      "seq": "C",
+      "title": "余额不足 rejected + 禁 start",
+      "verdict": "FAIL",
+      "attribution": "环境",
+      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "request_id": "",
+      "hub_task": null,
+      "hub_outbox": null,
+      "points_acks": [],
+      "points_billing": null,
+      "points_entries": [],
+      "points_balance": null,
+      "hub_http": [],
+      "hub_issues": [],
+      "notes": []
+    },
+    {
+      "seq": "D",
+      "title": "丢 ACK duplicate",
+      "verdict": "FAIL",
+      "attribution": "环境",
+      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "request_id": "",
+      "hub_task": null,
+      "hub_outbox": null,
+      "points_acks": [],
+      "points_billing": null,
+      "points_entries": [],
+      "points_balance": null,
+      "hub_http": [],
+      "hub_issues": [],
+      "notes": []
+    },
+    {
+      "seq": "E",
+      "title": "无 hold 先 release 墓碑",
+      "verdict": "FAIL",
+      "attribution": "环境",
+      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "request_id": "",
+      "hub_task": null,
+      "hub_outbox": null,
+      "points_acks": [],
+      "points_billing": null,
+      "points_entries": [],
+      "points_balance": null,
+      "hub_http": [],
+      "hub_issues": [],
+      "notes": []
+    },
+    {
+      "seq": "F",
+      "title": "settle shortfall 停重试",
+      "verdict": "FAIL",
+      "attribution": "环境",
+      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "request_id": "",
+      "hub_task": null,
+      "hub_outbox": null,
+      "points_acks": [],
+      "points_billing": null,
+      "points_entries": [],
+      "points_balance": null,
+      "hub_http": [],
+      "hub_issues": [],
+      "notes": []
+    }
+  ],
+  "hub_issues": [
+    {
+      "seq": "env",
+      "title": "kit-meter clone denied",
+      "detail": "git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...\nremote: Repository not found.\nfatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found",
+      "request": {
+        "url": "https://github.com/lilei0311/kit-meter.git",
+        "pin": "e80920eb"
+      },
+      "response": {
+        "repository_selection": "selected",
+        "visible": [
+          "kit-accounts"
+        ]
+      }
+    }
+  ]
+}
