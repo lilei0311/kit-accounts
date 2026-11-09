@@ -10,6 +10,7 @@ OPS_DIR="$(cd "$(dirname "$0")" && pwd)"
 ACCOUNTS_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEFAULT_REPO="${KIT_METER_REPO_ROOT:-/tmp/dual-ledger/kit-meter}"
 REPO_ROOT="${KIT_METER_REPO_ROOT:-$DEFAULT_REPO}"
+KIT_METER_PIN="${KIT_METER_PIN:-40967aae}"
 HUB_BASE="${METER_HUB_BASE_URL:-http://127.0.0.1:8088}"
 ACCOUNT_ID="${JOINT_DEBUG_ACCOUNT_ID:-acct_joint_debug}"
 POOR_ACCOUNT="${JOINT_DEBUG_POOR_ACCOUNT:-acct_joint_debug_poor}"
@@ -29,7 +30,7 @@ DO_MINT_KEY=0
 
 usage() {
   cat <<USAGE
-Usage: $SCRIPT_NAME [--prep-only] [--start-pg] [--seq A|B|AB|all] [--mint-key] [-h]
+Usage: $SCRIPT_NAME [--prep-only] [--start-pg] [--seq A|B|AB|C|D|E|E1|E2|F|all] [--mint-key] [-h]
 
 Env (required for live sequences; skipped for --prep-only):
   CALLBACK_URL or KIT_METER_POINTS_CALLBACK_URL
@@ -40,14 +41,16 @@ Hub client:
   METER_HUB_BASE_URL          default http://127.0.0.1:8088
   METER_HUB_MSK_TOKEN         customer msk_… (or use --mint-key with Hub up)
   KIT_METER_API_TOKEN         bootstrap for --mint-key only (local fake)
-  KIT_METER_REPO_ROOT         default $DEFAULT_REPO
+  KIT_METER_REPO_ROOT         default $DEFAULT_REPO (HEAD must match KIT_METER_PIN)
+  KIT_METER_PIN               default 40967aae (kit-meter PR #9 lock; TechBot: full SHA)
+  KIT_METER_CHECKOUT_PIN=1    explicit: allow moving ROOT HEAD to PIN (never silent)
   KIT_METER_PG_DSN            required for Hub PG path unless --start-pg
   JOINT_DEBUG_ALLOW_REMOTE=1  allow non-local callback host (still refuse known prod)
 
 Flags:
   --prep-only   validate tree/uv/portable PG; print checklist; no HTTP posts
   --start-pg    init/start ephemeral portable PG on 127.0.0.1:$PG_PORT (throwaway)
-  --seq         which sequences to run when env set (default AB)
+  --seq         which sequences to run when env set (default all; E = E1 then E2)
   --mint-key    POST /v1alpha/keys once (local Hub) and print token
 USAGE
 }
@@ -206,10 +209,33 @@ run_prep_only() {
   log "=== --prep-only checklist ==="
   local ok=1
   echo "REPO_ROOT=$REPO_ROOT"
-  if [[ -d "$REPO_ROOT/.git" ]] || [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
+    if [[ -d "$REPO_ROOT/.git" ]] || [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
     echo "  [ok] tree present"
     if [[ -d "$REPO_ROOT/.git" ]]; then
-      echo -n "  HEAD="; git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "(no git)"
+      local head
+      head=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)
+      echo "  HEAD=$head"
+      echo "  PIN=$KIT_METER_PIN"
+      if [[ -n "$head" ]]; then
+        if python3 - "$head" "$KIT_METER_PIN" <<'PY'
+import sys
+head, pin = sys.argv[1].strip().lower(), sys.argv[2].strip().lower()
+ok = len(head) >= 7 and len(pin) >= 7 and (head.startswith(pin) or pin.startswith(head))
+sys.exit(0 if ok else 1)
+PY
+        then
+          echo "  [ok] HEAD matches KIT_METER_PIN"
+        else
+          echo "  [FAIL] HEAD $head does not match KIT_METER_PIN=$KIT_METER_PIN"
+          echo "         Refusing silent checkout (would roll back meter fixes)."
+          echo "         Set KIT_METER_PIN to this HEAD, or KIT_METER_CHECKOUT_PIN=1 to move HEAD explicitly."
+          if [[ "${KIT_METER_CHECKOUT_PIN:-}" != "1" ]]; then
+            ok=0
+          else
+            echo "  [warn] KIT_METER_CHECKOUT_PIN=1 set; operator must checkout $KIT_METER_PIN (prep-only will not move HEAD)"
+          fi
+        fi
+      fi
     fi
   else
     echo "  [FAIL] missing kit-meter tree"; ok=0
@@ -377,27 +403,117 @@ seq_D() {
   log "D done. Expect accounts: duplicate original_result=applied + original snapshot_ref"
 }
 
-seq_E() {
-  # E: create without hold, probe fail/cancel/release, then late hold.
-  log "=== Sequence E: release-before-hold tombstone ==="
+seq_E1() {
+  # E1: Hub real release-without-hold. Subsequent Hub hold MUST 409.
+  # Gate is Hub HTTP 409 — points rejected is NOT a substitute.
+  log "=== Sequence E1: Hub release-without-hold; later hold MUST 409 ==="
   mkdir -p "$EVIDENCE_DIR"
   local create_resp rid
   create_resp=$(create_task)
-  echo "$create_resp" | tee "$EVIDENCE_DIR/E-create.json"; echo
+  echo "$create_resp" | tee "$EVIDENCE_DIR/E1-create.json"; echo
   rid=$(printf '%s' "$create_resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["request_id"])')
   log "request_id=$rid (no hold yet)"
-  hub_curl POST "/v1/tasks/${rid}/fail" '{"reason":"client_abort"}' | tee "$EVIDENCE_DIR/E-fail.json"; echo
-  hub_curl POST "/v1/tasks/${rid}/cancel" '{}' | tee "$EVIDENCE_DIR/E-cancel.json"; echo
-  hub_curl POST "/v1/tasks/${rid}/release" '{"reason":"hold_timeout"}' | tee "$EVIDENCE_DIR/E-release.json"; echo
+  printf '%s' "$rid" > "$EVIDENCE_DIR/E1-request-id.txt"
+  hub_curl POST "/v1/tasks/${rid}/fail" '{"reason":"client_abort"}' | tee "$EVIDENCE_DIR/E1-fail.json"; echo
+  hub_curl POST "/v1/tasks/${rid}/cancel" '{}' | tee "$EVIDENCE_DIR/E1-cancel.json"; echo
+  hub_curl POST "/v1/tasks/${rid}/release" '{"reason":"hold_timeout"}' | tee "$EVIDENCE_DIR/E1-release.json"; echo
   local now_iso
   now_iso=$(python3 -c 'from datetime import datetime,timedelta,timezone; print((datetime.now(timezone.utc)+timedelta(seconds=901)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
-  hub_curl POST /v1/ops/expire-holds "$(printf '{"now":"%s"}' "$now_iso")" | tee "$EVIDENCE_DIR/E-expire.json"; echo
+  hub_curl POST /v1/ops/expire-holds "$(printf '{"now":"%s"}' "$now_iso")" | tee "$EVIDENCE_DIR/E1-expire.json"; echo
   pump_outbox
-  log "E: late hold — expect rejected, no debit"
-  hub_curl POST "/v1/tasks/${rid}/hold" '{}' | tee "$EVIDENCE_DIR/E-late-hold.json"; echo
+  log "E1: Hub hold after terminal — expect HTTP 409 (do not relax this gate)"
+  local auth="${METER_HUB_MSK_TOKEN:-}"
+  local args=(-sS -o "$EVIDENCE_DIR/E1-late-hold.json" -w '%{http_code}' -X POST "${HUB_BASE}/v1/tasks/${rid}/hold" -H "Content-Type: application/json" -d '{}')
+  if [[ -n "$auth" ]]; then
+    args+=(-H "Authorization: Bearer $auth")
+  fi
+  local hold_status
+  hold_status=$(curl "${args[@]}")
+  printf '%s\n' "$hold_status" | tee "$EVIDENCE_DIR/E1-late-hold-status.txt"
+  echo
   pump_outbox
-  hub_curl GET "/v1/tasks/${rid}" | tee "$EVIDENCE_DIR/E-task.json"; echo
-  log "E done. Expect cancelled_without_hold then late hold rejected."
+  hub_curl GET "/v1/tasks/${rid}" | tee "$EVIDENCE_DIR/E1-task.json"; echo
+  log "E1 done. Expect cancelled_without_hold, entries=[], outbox acked, Hub hold HTTP $hold_status (must be 409)."
+}
+
+seq_E2() {
+  # E2: in-flight hold against tombstone. Direct points inbound. NOT Hub e2e.
+  # E1 409 cannot replace this. Decimal usage as strings. Local fake creds only.
+  log "=== Sequence E2: in-flight task_hold via points inbound (NOT Hub e2e) ==="
+  mkdir -p "$EVIDENCE_DIR"
+  local rid=""
+  if [[ -f "$EVIDENCE_DIR/E1-request-id.txt" ]]; then
+    rid=$(cat "$EVIDENCE_DIR/E1-request-id.txt")
+  fi
+  [[ -n "$rid" ]] || die "E2 needs E1 request_id ($EVIDENCE_DIR/E1-request-id.txt). Run E1 first."
+  local inbound="${CALLBACK_URL%/}/internal/v0/meter-events"
+  log "E2: POST $inbound event_id=evt_hold_${rid} (points-inbound-sim)"
+  python3 - "$rid" "$ACCOUNT_ID" "$TOKEN" "$CREDENTIAL_ID" "$inbound" "$EVIDENCE_DIR" <<'PY'
+import json, sys, urllib.error, urllib.request
+rid, account, token, cred, url, evid = sys.argv[1:7]
+envelope = {
+    "schema_version": "0",
+    "event_id": f"evt_hold_{rid}",
+    "kind": "task_hold",
+    "occurred_at": "2026-11-09T13:00:00Z",
+    "request_id": rid,
+    "account_id": account,
+    "billing": "platform",
+    "estimate": {
+        "model_id": "demo-text-v0",
+        "modality": "text",
+        "unit_kind": "tokens",
+        "input_units": "100",
+        "output_units": "20",
+    },
+}
+req_path = evid + "/E2-inbound-request.json"
+resp_path = evid + "/E2-inbound-response.json"
+with open(req_path, "w", encoding="utf-8") as fh:
+    json.dump(envelope, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+data = json.dumps(envelope).encode("utf-8")
+req = urllib.request.Request(
+    url, data=data, method="POST",
+    headers={
+        "Authorization": f"Bearer {token}",
+        "credential_id": cred,
+        "Content-Type": "application/json",
+    },
+)
+try:
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = resp.read().decode("utf-8")
+        status = resp.status
+except urllib.error.HTTPError as exc:
+    body = exc.read().decode("utf-8", errors="replace")
+    status = exc.code
+except Exception as exc:
+    body = str(exc)
+    status = 0
+record = {"status": status, "body": None, "text": body, "note": "NOT Hub e2e"}
+try:
+    record["body"] = json.loads(body)
+except Exception:
+    pass
+with open(resp_path, "w", encoding="utf-8") as fh:
+    json.dump(record, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+print(json.dumps(record, ensure_ascii=False))
+result = (record.get("body") or {}).get("result")
+if status != 200 or result != "rejected":
+    print(
+        f"E2 expected result=rejected, got status={status} result={result}",
+        file=sys.stderr,
+    )
+PY
+  echo
+  log "E2 done. Expect result=rejected and no new debit. This is NOT Hub end-to-end; E1 409 cannot replace E2."
+}
+
+seq_E() {
+  seq_E1
+  seq_E2
 }
 
 seq_F() {
@@ -435,6 +551,8 @@ run_sequences() {
     C) seq_C ;;
     D) seq_D ;;
     E) seq_E ;;
+    E1) seq_E1 ;;
+    E2) seq_E2 ;;
     F) seq_F ;;
     *) die "unknown --seq $SEQ" ;;
   esac

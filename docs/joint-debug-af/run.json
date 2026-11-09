@@ -1,10 +1,11 @@
 {
-  "at": "2026-11-09T23:09:34Z",
+  "at": "2026-11-09T23:51:30Z",
   "points_backend": "postgres",
   "clone": "git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...\nremote: Repository not found.\nfatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found",
   "meter_repo": null,
-  "kit_meter_pin": "e80920eb",
-  "kit_accounts_head": "963c43197a6ed02ff11e9bc7a5589bec22ba4afc",
+  "kit_meter_pin": "40967aae",
+  "kit_meter_sha": null,
+  "kit_accounts_head": "c3737cfb5834b43bc0318f37fcc598563aad9232",
   "env_notes": [
     "points ledger: local Postgres kit_accounts_joint (schema points)",
     "git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...\nremote: Repository not found.\nfatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found",
@@ -17,7 +18,7 @@
       "title": "正常 hold→start→freeze/settle",
       "verdict": "FAIL",
       "attribution": "环境",
-      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "summary": "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。",
       "request_id": "",
       "hub_task": null,
       "hub_outbox": null,
@@ -27,14 +28,15 @@
       "points_balance": null,
       "hub_http": [],
       "hub_issues": [],
-      "notes": []
+      "notes": [],
+      "mode": "hub"
     },
     {
       "seq": "B",
       "title": "超时 hold→expire-holds/release",
       "verdict": "FAIL",
       "attribution": "环境",
-      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "summary": "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。",
       "request_id": "",
       "hub_task": null,
       "hub_outbox": null,
@@ -44,14 +46,15 @@
       "points_balance": null,
       "hub_http": [],
       "hub_issues": [],
-      "notes": []
+      "notes": [],
+      "mode": "hub"
     },
     {
       "seq": "C",
       "title": "余额不足 rejected + 禁 start",
       "verdict": "FAIL",
       "attribution": "环境",
-      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "summary": "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。",
       "request_id": "",
       "hub_task": null,
       "hub_outbox": null,
@@ -61,14 +64,15 @@
       "points_balance": null,
       "hub_http": [],
       "hub_issues": [],
-      "notes": []
+      "notes": [],
+      "mode": "hub"
     },
     {
       "seq": "D",
       "title": "丢 ACK duplicate",
       "verdict": "FAIL",
       "attribution": "环境",
-      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "summary": "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。",
       "request_id": "",
       "hub_task": null,
       "hub_outbox": null,
@@ -78,14 +82,15 @@
       "points_balance": null,
       "hub_http": [],
       "hub_issues": [],
-      "notes": []
+      "notes": [],
+      "mode": "hub"
     },
     {
-      "seq": "E",
-      "title": "无 hold 先 release 墓碑",
+      "seq": "E1",
+      "title": "Hub 无 hold 先 release 墓碑；再 hold 须 409",
       "verdict": "FAIL",
       "attribution": "环境",
-      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "summary": "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。",
       "request_id": "",
       "hub_task": null,
       "hub_outbox": null,
@@ -95,14 +100,33 @@
       "points_balance": null,
       "hub_http": [],
       "hub_issues": [],
-      "notes": []
+      "notes": [],
+      "mode": "hub"
+    },
+    {
+      "seq": "E2",
+      "title": "本地模拟在途 task_hold（非 Hub 端到端）",
+      "verdict": "FAIL",
+      "attribution": "环境",
+      "summary": "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。",
+      "request_id": "",
+      "hub_task": null,
+      "hub_outbox": null,
+      "points_acks": [],
+      "points_billing": null,
+      "points_entries": [],
+      "points_balance": null,
+      "hub_http": [],
+      "hub_issues": [],
+      "notes": [],
+      "mode": "points-inbound-sim"
     },
     {
       "seq": "F",
       "title": "settle shortfall 停重试",
       "verdict": "FAIL",
       "attribution": "环境",
-      "summary": "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+      "summary": "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。",
       "request_id": "",
       "hub_task": null,
       "hub_outbox": null,
@@ -112,23 +136,23 @@
       "points_balance": null,
       "hub_http": [],
       "hub_issues": [],
-      "notes": []
+      "notes": [],
+      "mode": "hub"
     }
   ],
   "hub_issues": [
     {
       "seq": "env",
-      "title": "kit-meter clone denied",
+      "title": "kit-meter tree unavailable or pin mismatch",
       "detail": "git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...\nremote: Repository not found.\nfatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found",
       "request": {
         "url": "https://github.com/lilei0311/kit-meter.git",
-        "pin": "e80920eb"
+        "pin": "40967aae",
+        "default_pin": "40967aae"
       },
       "response": {
-        "repository_selection": "selected",
-        "visible": [
-          "kit-accounts"
-        ]
+        "head": null,
+        "root": null
       }
     }
   ]

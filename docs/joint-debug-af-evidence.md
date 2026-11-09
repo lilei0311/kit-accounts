@@ -1,8 +1,9 @@
 # 双账真对打证据（冻结契约 A–F）
 
-- 时间（UTC）：`2026-11-09T23:09:34Z`
-- kit-accounts HEAD：`963c43197a6ed02ff11e9bc7a5589bec22ba4afc`
-- kit-meter pin：`e80920eb`
+- 时间（UTC）：`2026-11-09T23:51:30Z`
+- kit-accounts HEAD：`c3737cfb5834b43bc0318f37fcc598563aad9232`
+- kit-meter pin：`40967aae`
+- kit-meter HEAD（完整 SHA）：`UNAVAILABLE`
 - kit-meter 树：`UNAVAILABLE`
 - 积分存储：`postgres`
 - clone：git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...
@@ -23,20 +24,22 @@ fatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found
 
 ## A–F 一句话
 
-- **A FAIL**（卡点：环境） `-` — 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
-- **B FAIL**（卡点：环境） `-` — 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
-- **C FAIL**（卡点：环境） `-` — 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
-- **D FAIL**（卡点：环境） `-` — 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
-- **E FAIL**（卡点：环境） `-` — 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
-- **F FAIL**（卡点：环境） `-` — 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
+- **A FAIL**（卡点：环境） `-` — kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
+- **B FAIL**（卡点：环境） `-` — kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
+- **C FAIL**（卡点：环境） `-` — kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
+- **D FAIL**（卡点：环境） `-` — kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
+- **E1 FAIL**（卡点：环境） `-` — kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
+- **E2 FAIL**（卡点：环境） `-` — kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
+- **F FAIL**（卡点：环境） `-` — kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
 
 ## 逐条对账
 
 ### A FAIL — 正常 hold→start→freeze/settle
 
 - request_id: `n/a`
+- 模式: `hub`
 - 卡点归属: **环境**
-- 摘要: 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
+- 摘要: kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
 
 Hub `meter.tasks`：
 
@@ -69,8 +72,9 @@ null
 ### B FAIL — 超时 hold→expire-holds/release
 
 - request_id: `n/a`
+- 模式: `hub`
 - 卡点归属: **环境**
-- 摘要: 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
+- 摘要: kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
 
 Hub `meter.tasks`：
 
@@ -103,8 +107,9 @@ null
 ### C FAIL — 余额不足 rejected + 禁 start
 
 - request_id: `n/a`
+- 模式: `hub`
 - 卡点归属: **环境**
-- 摘要: 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
+- 摘要: kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
 
 Hub `meter.tasks`：
 
@@ -137,8 +142,9 @@ null
 ### D FAIL — 丢 ACK duplicate
 
 - request_id: `n/a`
+- 模式: `hub`
 - 卡点归属: **环境**
-- 摘要: 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
+- 摘要: kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
 
 Hub `meter.tasks`：
 
@@ -168,11 +174,47 @@ null
 }
 ```
 
-### E FAIL — 无 hold 先 release 墓碑
+### E1 FAIL — Hub 无 hold 先 release 墓碑；再 hold 须 409
 
 - request_id: `n/a`
+- 模式: `hub`
 - 卡点归属: **环境**
-- 摘要: 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
+- 摘要: kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
+
+Hub `meter.tasks`：
+
+```json
+null
+```
+
+Hub `points_outbox`：
+
+```json
+null
+```
+
+积分 HTTP 回执：
+
+```json
+[]
+```
+
+积分 `billing_requests` + entries + 余额：
+
+```json
+{
+  "billing": null,
+  "entries": [],
+  "balance": null
+}
+```
+
+### E2 FAIL — 本地模拟在途 task_hold（非 Hub 端到端）
+
+- request_id: `n/a`
+- 模式: `points-inbound-sim`
+- 卡点归属: **环境**
+- 摘要: kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
 
 Hub `meter.tasks`：
 
@@ -205,8 +247,9 @@ null
 ### F FAIL — settle shortfall 停重试
 
 - request_id: `n/a`
+- 模式: `hub`
 - 卡点归属: **环境**
-- 摘要: 无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。
+- 摘要: kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，或可克隆且 HEAD 匹配 KIT_METER_PIN=40967aae）。本云不反复重试私仓 clone，不声称联合验收已过。
 
 Hub `meter.tasks`：
 
@@ -238,7 +281,7 @@ null
 
 ## Hub 侧问题（现象 + 请求/回执原文）
 
-### env: kit-meter clone denied
+### env: kit-meter tree unavailable or pin mismatch
 
 git clone failed: Cloning into '/tmp/dual-ledger/kit-meter'...
 remote: Repository not found.
@@ -249,7 +292,8 @@ fatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found
 ```json
 {
   "url": "https://github.com/lilei0311/kit-meter.git",
-  "pin": "e80920eb"
+  "pin": "40967aae",
+  "default_pin": "40967aae"
 }
 ```
 
@@ -257,22 +301,24 @@ fatal: repository 'https://github.com/lilei0311/kit-meter.git/' not found
 
 ```json
 {
-  "repository_selection": "selected",
-  "visible": [
-    "kit-accounts"
-  ]
+  "head": null,
+  "root": null
 }
 ```
 
 ## 建议（仅报告，未改业务代码）
 
-- 若 clone 失败：把 `lilei0311/kit-meter` 加入 GitHub App selected repos，
-  或把已 checkout `e80920eb` 的树放到 `KIT_METER_REPO_ROOT`。
+- 若 kit-meter 树不可用：把完整固定 SHA 放到 `KIT_METER_PIN`
+  （默认锁 `40967aae` = kit-meter PR #9，不要合），
+  `KIT_METER_REPO_ROOT` 的 HEAD 必须与 pin 一致；不一致会报错，
+  不会悄悄 checkout。仅当明确 `KIT_METER_CHECKOUT_PIN=1` 才拨 HEAD。
 - C：Hub 必须把积分 `result=rejected`（HTTP 200）当成 hold 失败，
   禁止 start/freeze，且不得再发 release 退款。
 - D：丢 ACK / 同 `event_id` 重放应回 `duplicate` + `original_result=applied`
   + 原 `snapshot_ref`；Hub 仅在任务仍有效时放行模型。
-- E：Hub 在从未 applied hold 时仍须能投递 `task_release`（墓碑）；
-  账户已实现 `cancelled_without_hold`。
+- E1：Hub 真实无 hold 先 release → 积分 `cancelled_without_hold`、entries=[]、
+  outbox acked；终态后再 hold 必须 Hub HTTP 409（不可用积分 rejected 凑绿）。
+- E2：本地直发积分 `/internal/v0/meter-events` 模拟在途 `evt_hold_<rid>`，
+  须 `result=rejected` 且无新扣款。非 Hub 端到端；E1 的 409 不能替代 E2。
 - F：`shortfall` 已落账，Hub 应将 outbox 标终态并停止重试。
 

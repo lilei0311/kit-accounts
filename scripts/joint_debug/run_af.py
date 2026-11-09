@@ -23,14 +23,32 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from harness import (  # noqa: E402
+    DEFAULT_KIT_METER_PIN,
+    PinMismatchError,
+    checkout_explicit,
+    dumps_json,
+    expected_pin,
+    git_full_sha,
+    isolated_child_env,
+    jsonable,
+    late_hold_envelope,
+    outbox_row_acked,
+    psycopg_is_in_project_venv,
+    require_meter_head_matches,
+    sha_matches_pin,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE_DIR = REPO_ROOT / "docs" / "joint-debug-af" / "evidence"
 REPORT_MD = REPO_ROOT / "docs" / "joint-debug-af-evidence.md"
 REPORT_JSON = REPO_ROOT / "docs" / "joint-debug-af" / "run.json"
 
 KIT_METER_URL = "https://github.com/lilei0311/kit-meter.git"
-KIT_METER_PIN = "e80920eb"
 KIT_METER_DEFAULT = Path("/tmp/dual-ledger/kit-meter")
 
 POINTS_HOST = "127.0.0.1"
@@ -127,6 +145,7 @@ class CaseResult:
     hub_http: list[Any] = field(default_factory=list)
     hub_issues: list[Any] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    mode: str = "hub"  # "hub" or "points-inbound-sim"
 
 
 def _now() -> str:
@@ -134,22 +153,12 @@ def _now() -> str:
 
 
 def _jsonable(value: Any) -> Any:
-    if isinstance(value, (datetime,)):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
-    if isinstance(value, (bytes, bytearray)):
-        return value.decode("utf-8", errors="replace")
-    return value
+    return jsonable(value)
 
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(_jsonable(payload), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    path.write_text(dumps_json(payload), encoding="utf-8")
 
 
 def _decode_body(resp: httpx.Response) -> Any:
@@ -324,24 +333,66 @@ def setup_meter_postgres(repo: Path) -> str:
     return dsn
 
 
-def locate_or_clone_kit_meter() -> tuple[Path | None, str]:
-    pinned = os.environ.get("KIT_METER_REPO_ROOT", "").strip()
-    candidates = []
-    if pinned:
-        candidates.append(Path(pinned))
-    candidates.extend(
-        [
-            KIT_METER_DEFAULT,
-            Path("/tmp/kit-meter"),
-            Path("/workspace/tmp/kit-meter-pr8-gate-541c66db"),
-        ]
+def _looks_like_meter(path: Path) -> bool:
+    return (path / "pyproject.toml").exists() or (path / "docs" / "http-api.md").exists()
+
+
+def _checkout_pin(repo: Path, pin: str) -> None:
+    if not (repo / ".git").exists():
+        raise RuntimeError(f"{repo} is not a git tree; cannot checkout {pin}")
+    fetch = subprocess.run(
+        ["git", "-C", str(repo), "fetch", "--depth", "1", "origin", pin],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    for path in candidates:
-        if (path / "pyproject.toml").exists() or (path / "docs" / "http-api.md").exists():
-            _checkout_pin(path)
-            return path, f"reused {path}"
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "checkout", "--detach", pin],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"explicit checkout of {pin} failed in {repo}: "
+            f"{(proc.stderr or fetch.stderr or proc.stdout).strip()}"
+        )
+
+
+def locate_or_clone_kit_meter() -> tuple[Path | None, str, str]:
+    """Return (path, note, full_sha). Never silently roll ROOT back to an old pin."""
+
+    pin = expected_pin()
+    root_raw = os.environ.get("KIT_METER_REPO_ROOT", "").strip()
+    allow = checkout_explicit()
+    if root_raw:
+        path = Path(root_raw).expanduser().resolve()
+        if not _looks_like_meter(path):
+            return None, f"KIT_METER_REPO_ROOT={path} is not a kit-meter tree", ""
+        sha = git_full_sha(path)
+        try:
+            require_meter_head_matches(sha, pin, root=path, allow_checkout=allow)
+        except PinMismatchError as exc:
+            return None, str(exc), sha
+        if not sha_matches_pin(sha, pin):
+            _checkout_pin(path, pin)
+            sha = git_full_sha(path)
+            if not sha_matches_pin(sha, pin):
+                return None, f"after checkout HEAD {sha} still != pin {pin}", sha
+        return path, f"ROOT {path} HEAD {sha} matches pin {pin}", sha
+
     dest = KIT_METER_DEFAULT
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and _looks_like_meter(dest) and (dest / ".git").exists():
+        sha = git_full_sha(dest)
+        if sha_matches_pin(sha, pin):
+            return dest, f"reused {dest} HEAD {sha} matches pin {pin}", sha
+        return (
+            None,
+            f"found {dest} HEAD {sha} != pin {pin}; set KIT_METER_REPO_ROOT "
+            f"and KIT_METER_CHECKOUT_PIN=1 to move it, or point ROOT at {pin}",
+            sha,
+        )
     if dest.exists():
         shutil.rmtree(dest)
     proc = subprocess.run(
@@ -351,35 +402,37 @@ def locate_or_clone_kit_meter() -> tuple[Path | None, str]:
     )
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
-        return None, f"git clone failed: {err}"
-    _checkout_pin(dest)
-    return dest, f"cloned {dest} @ {KIT_METER_PIN}"
+        return None, f"git clone failed: {err}", ""
+    _checkout_pin(dest, pin)
+    sha = git_full_sha(dest)
+    if not sha_matches_pin(sha, pin):
+        return None, f"cloned HEAD {sha} does not match pin {pin}", sha
+    return dest, f"cloned {dest} HEAD {sha} (pin {pin})", sha
 
 
-def _checkout_pin(repo: Path) -> None:
-    if not (repo / ".git").exists():
-        return
-    subprocess.run(["git", "-C", str(repo), "fetch", "origin", KIT_METER_PIN], check=False)
-    proc = subprocess.run(
-        ["git", "-C", str(repo), "checkout", "--detach", KIT_METER_PIN],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        # allow short SHA that is already in the tree
-        subprocess.run(
-            ["git", "-C", str(repo), "checkout", "--detach", KIT_METER_PIN],
-            check=False,
-        )
-
-
-def start_tmux(name: str, cwd: Path, command: str, env: dict[str, str]) -> None:
+def start_tmux(name: str, cwd: Path, command: str, extra: dict[str, str]) -> None:
     subprocess.run(["tmux", "kill-session", "-t", name], check=False, capture_output=True)
-    env_exports = " ".join(f"{k}={_shell_quote(v)}" for k, v in env.items())
-    inner = f"cd {_shell_quote(str(cwd))} && {env_exports} {command}; echo EXIT:$?; exec bash"
+    wrapper_dir = Path("/tmp/joint-debug")
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    wrapper = wrapper_dir / f"start-{name}.sh"
+    EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "unset VIRTUAL_ENV PYTHONPATH PYTHONHOME PYTHONSTARTUP UV_PROJECT_ENVIRONMENT",
+        f"cd {_shell_quote(str(cwd))}",
+    ]
+    for key, value in isolated_child_env(extra).items():
+        if key in extra or key == "PATH":
+            lines.append(f"export {key}={_shell_quote(value)}")
+    lines.append(command)
+    lines.append("echo EXIT:$?")
+    wrapper.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    wrapper.chmod(0o755)
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "-c", str(cwd), "bash", "-lc", inner],
+        ["tmux", "new-session", "-d", "-s", name, "-c", str(cwd), "bash", str(wrapper)],
         check=True,
+        env=isolated_child_env(),
     )
 
 
@@ -401,29 +454,54 @@ def stop_tmux(*names: str) -> None:
         subprocess.run(["tmux", "kill-session", "-t", name], check=False, capture_output=True)
 
 
-def hub_sync(repo: Path) -> None:
-    env = os.environ.copy()
-    env["PATH"] = f"{Path.home() / '.local' / 'bin'}:{env.get('PATH', '')}"
-    locked = subprocess.run(
-        ["uv", "sync", "--locked", "--extra", "http"],
+def hub_sync(repo: Path) -> str:
+    """Install Hub deps into *that* project's venv. Fail loudly. No sitecustomize."""
+
+    env = isolated_child_env()
+    cmd = ["uv", "sync", "--extra", "http"]
+    if (repo / "uv.lock").exists():
+        cmd = ["uv", "sync", "--locked", "--extra", "http"]
+    synced = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True)
+    if synced.returncode != 0:
+        raise RuntimeError(
+            f"uv sync failed in {repo} ({' '.join(cmd)}):\n{synced.stderr or synced.stdout}"
+        )
+    pip = subprocess.run(
+        ["uv", "pip", "install", "psycopg[binary]>=3.1"],
         cwd=repo,
         env=env,
         capture_output=True,
         text=True,
     )
-    if locked.returncode != 0:
-        subprocess.run(
-            ["uv", "sync", "--extra", "http"],
-            cwd=repo,
-            check=True,
-            env=env,
+    if pip.returncode != 0:
+        raise RuntimeError(
+            f"uv pip install psycopg failed in Hub venv {repo}:\n{pip.stderr or pip.stdout}"
         )
-    subprocess.run(
-        ["uv", "pip", "install", "psycopg[binary]>=3.1"],
+    probe = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "-c",
+            "import psycopg,sys; print(psycopg.__file__); print(sys.prefix)",
+        ],
         cwd=repo,
-        check=False,
         env=env,
+        capture_output=True,
+        text=True,
     )
+    if probe.returncode != 0:
+        raise RuntimeError(f"Hub venv cannot import psycopg:\n{probe.stderr or probe.stdout}")
+    lines = [ln.strip() for ln in probe.stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        raise RuntimeError(f"unexpected psycopg probe output: {probe.stdout!r}")
+    ok, detail = psycopg_is_in_project_venv(lines[0], lines[1], repo)
+    if not ok:
+        raise RuntimeError(
+            "psycopg is not installed in kit-meter's own .venv "
+            f"(clean run must not use parent venv / sitecustomize): {detail}"
+        )
+    return detail
 
 
 def mint_key(hub: HubClient) -> str:
@@ -635,12 +713,17 @@ class Runner:
         self.points_dsn: str | None = None
         self.meter_dsn: str | None = None
         self.meter_repo: Path | None = None
+        self.meter_sha = ""
+        self.meter_pin = expected_pin()
         self.points_backend = "unknown"
         self.clone_note = ""
         self.hub_issues: list[HubIssue] = []
         self.cases: list[CaseResult] = []
         self.hub: HubClient | None = None
         self.env_notes: list[str] = []
+        self.e1_rid = ""
+        self.e1_account = JOINT_ACCOUNT
+        self.e1_estimate = ESTIMATE_A
 
     def run(self) -> int:
         print(f"evidence -> {self.evidence}", file=sys.stderr)
@@ -662,7 +745,6 @@ class Runner:
             "POINTS_METER_HTTP_HOST": POINTS_HOST,
             "POINTS_METER_HTTP_PORT": str(POINTS_PORT),
             "JOINT_DEBUG_CAPTURE_PATH": str(self.capture_path),
-            "PATH": f"{Path.home() / '.local' / 'bin'}:{os.environ.get('PATH', '')}",
         }
         if self.points_dsn:
             points_env["MAXKIT_POINTS_DSN"] = self.points_dsn
@@ -689,32 +771,37 @@ class Runner:
             self._write_reports()
             return 2
 
-        self.meter_repo, self.clone_note = locate_or_clone_kit_meter()
+        self.meter_repo, self.clone_note, self.meter_sha = locate_or_clone_kit_meter()
         self.env_notes.append(self.clone_note)
+        if self.meter_sha:
+            self.env_notes.append(f"kit-meter full SHA {self.meter_sha} (pin {self.meter_pin})")
         if self.meter_repo is None:
             self._points_smoke()
             self._fail_all(
                 "环境",
-                "无法克隆 kit-meter（GitHub App 仅授权 kit-accounts，私仓 404）。"
-                "把 kit-meter 加进 Cursor GitHub App 或设置 KIT_METER_REPO_ROOT 后重跑。",
+                "kit-meter 树不可用（需 KIT_METER_REPO_ROOT 指向固定 SHA，"
+                f"或可克隆且 HEAD 匹配 KIT_METER_PIN={self.meter_pin}）。"
+                "本云不反复重试私仓 clone，不声称联合验收已过。",
             )
             self.hub_issues.append(
                 HubIssue(
                     seq="env",
-                    title="kit-meter clone denied",
+                    title="kit-meter tree unavailable or pin mismatch",
                     detail=self.clone_note,
-                    request={"url": KIT_METER_URL, "pin": KIT_METER_PIN},
-                    response={
-                        "repository_selection": "selected",
-                        "visible": ["kit-accounts"],
+                    request={
+                        "url": KIT_METER_URL,
+                        "pin": self.meter_pin,
+                        "default_pin": DEFAULT_KIT_METER_PIN,
                     },
+                    response={"head": self.meter_sha or None, "root": None},
                 )
             )
             self._write_reports()
             return 1
 
         try:
-            hub_sync(self.meter_repo)
+            psycopg_detail = hub_sync(self.meter_repo)
+            self.env_notes.append(f"Hub venv psycopg ok: {psycopg_detail}")
             self.meter_dsn = setup_meter_postgres(self.meter_repo)
             self.env_notes.append(
                 "meter PG: local kit_meter_joint; applied 001+003"
@@ -733,7 +820,6 @@ class Runner:
             "KIT_METER_POINTS_CALLBACK_CREDENTIAL_ID": CALLBACK_CREDENTIAL,
             "KIT_METER_HTTP_HOST": HUB_HOST,
             "KIT_METER_HTTP_PORT": str(HUB_PORT),
-            "PATH": f"{Path.home() / '.local' / 'bin'}:{os.environ.get('PATH', '')}",
         }
         start_tmux(
             "meter-hub",
@@ -775,7 +861,8 @@ class Runner:
         self.cases.append(self.seq_b())
         self.cases.append(self.seq_c())
         self.cases.append(self.seq_d())
-        self.cases.append(self.seq_e())
+        self.cases.append(self.seq_e1())
+        self.cases.append(self.seq_e2())
         self.cases.append(self.seq_f())
         self._write_reports()
         return 0 if all(c.verdict == "PASS" for c in self.cases) else 1
@@ -834,7 +921,8 @@ class Runner:
             "B": "超时 hold→expire-holds/release",
             "C": "余额不足 rejected + 禁 start",
             "D": "丢 ACK duplicate",
-            "E": "无 hold 先 release 墓碑",
+            "E1": "Hub 无 hold 先 release 墓碑；再 hold 须 409",
+            "E2": "本地模拟在途 task_hold（非 Hub 端到端）",
             "F": "settle shortfall 停重试",
         }
         for seq, title in titles.items():
@@ -846,6 +934,7 @@ class Runner:
                     attribution=attribution,
                     summary=summary,
                     notes=[extra] if extra else [],
+                    mode="points-inbound-sim" if seq == "E2" else "hub",
                 )
             )
 
@@ -1197,13 +1286,42 @@ class Runner:
             [f"outbox reset={reset}"],
         )
 
-    def seq_e(self) -> CaseResult:
-        title = "无 hold 先 release 墓碑；迟到 hold rejected 不扣"
+    def points_inbound(self, envelope: dict[str, Any]) -> HttpCall:
+        url = f"http://{POINTS_HOST}:{POINTS_PORT}/internal/v0/meter-events"
+        headers = {
+            "Authorization": f"Bearer {CALLBACK_TOKEN}",
+            "credential_id": CALLBACK_CREDENTIAL,
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = httpx.post(url, json=envelope, headers=headers, timeout=15.0)
+            return HttpCall(
+                method="POST",
+                url=url,
+                request=envelope,
+                status=resp.status_code,
+                body=_decode_body(resp),
+                text=resp.text,
+            )
+        except httpx.HTTPError as exc:
+            return HttpCall(
+                method="POST",
+                url=url,
+                request=envelope,
+                status=None,
+                body=None,
+                text="",
+                error=str(exc),
+            )
+
+    def seq_e1(self) -> CaseResult:
+        title = "E1 Hub 真实 release：无 hold 先 release；再 hold 须 409"
         issues: list[HubIssue] = []
-        create = self.create(JOINT_ACCOUNT, ESTIMATE_A)
+        create = self.create(self.e1_account, self.e1_estimate)
         rid = find_rid(create)
+        self.e1_rid = rid
         if not rid:
-            return self._case("E", title, "FAIL", "计量", "create 无 request_id", "", issues)
+            return self._case("E1", title, "FAIL", "计量", "create 无 request_id", "", issues)
         assert self.hub is not None
         probes = []
         for method, path, payload in (
@@ -1218,13 +1336,38 @@ class Runner:
         expire = self.expire(iso_plus(901))
         probes.append(expire)
         pump1 = self.pump()
-        snap1 = self.snapshot(rid, JOINT_ACCOUNT)
-        release_ack = next((a for a in snap1["acks"] if a["kind"] == "task_release"), None)
+        hold = self.hold(rid)
+        pump2 = self.pump()
+        task = self.get_task(rid)
+        snap = self.snapshot(rid, self.e1_account)
+        acks = snap["acks"]
+        release_ack = next((a for a in acks if a["kind"] == "task_release"), None)
+        hold_ack = next((a for a in acks if a["kind"] == "task_hold"), None)
+        entries = []
+        if isinstance(snap["points"], dict):
+            entries = list(snap["points"].get("entries") or [])
+        tombstone = bool(
+            release_ack
+            and release_ack.get("result") == "applied"
+            and release_ack.get("effect") == "cancelled_without_hold"
+        )
+        entries_empty = entries == []
+        outbox_rows = []
+        if isinstance(snap["meter"], dict):
+            outbox_rows = list(snap["meter"].get("outbox") or [])
+        release_rows = [
+            row
+            for row in outbox_rows
+            if "release" in str(row.get("kind") or "").lower()
+            or str(row.get("event_id") or "").startswith("evt_release_")
+        ]
+        outbox_ok = bool(release_rows) and all(outbox_row_acked(row) for row in release_rows)
+        hub_hold_409 = hold.status == 409
         if release_ack is None:
             issues.append(
                 HubIssue(
-                    "E",
-                    "Hub 无 hold 时未投递 task_release（fail/cancel/release/expire 均未入站）",
+                    "E1",
+                    "Hub 无 hold 时未投递 task_release",
                     json.dumps(
                         [{"status": c.status, "url": c.url, "body": c.body} for c in probes],
                         ensure_ascii=False,
@@ -1233,46 +1376,58 @@ class Runner:
                     pump1.body,
                 )
             )
-        hold = self.hold(rid)
-        pump2 = self.pump()
-        task = self.get_task(rid)
-        snap = self.snapshot(rid, JOINT_ACCOUNT)
-        acks = snap["acks"]
-        release_ack = next((a for a in acks if a["kind"] == "task_release"), None)
-        hold_ack = next((a for a in acks if a["kind"] == "task_hold"), None)
-        tombstone = bool(
-            release_ack
-            and release_ack.get("result") == "applied"
-            and release_ack.get("effect") == "cancelled_without_hold"
-        )
-        late_rejected = bool(hold_ack and hold_ack.get("result") == "rejected")
-        billed = False
-        if isinstance(snap["points"], dict):
-            for entry in snap["points"].get("entries") or []:
-                if entry.get("kind") == "task_hold" and int(entry.get("delta") or 0) < 0:
-                    billed = True
-        if not late_rejected and hold_ack and hold_ack.get("result") == "applied":
+        if hold_ack is not None:
             issues.append(
                 HubIssue(
-                    "E",
-                    "墓碑后迟到 hold 被 Hub/账户当成 applied（应 rejected 不扣）",
+                    "E1",
+                    "终态后 Hub 仍把 hold 推到积分（E1 门禁是 Hub 409，不是积分 rejected）",
                     json.dumps(hold_ack, ensure_ascii=False),
                     hold.request,
                     hold.body,
                 )
             )
-        ok = tombstone and late_rejected and not billed
+        if not hub_hold_409:
+            issues.append(
+                HubIssue(
+                    "E1",
+                    f"终态后再 hold 应为 HTTP 409，实际 status={hold.status}",
+                    hold.text,
+                    hold.request,
+                    hold.body,
+                )
+            )
+        if tombstone and not entries_empty:
+            issues.append(
+                HubIssue(
+                    "E1",
+                    "墓碑应 entries=[]（无扣款/无 release 退款分录）",
+                    json.dumps(entries, ensure_ascii=False, default=str),
+                    None,
+                    entries,
+                )
+            )
+        if tombstone and not outbox_ok:
+            issues.append(
+                HubIssue(
+                    "E1",
+                    "task_release outbox 未 acked",
+                    json.dumps(outbox_rows, ensure_ascii=False, default=str),
+                    pump1.request,
+                    pump1.body,
+                )
+            )
+        ok = tombstone and entries_empty and outbox_ok and hub_hold_409 and hold_ack is None
         verdict = "PASS" if ok else "FAIL"
         attr = "无" if verdict == "PASS" else "计量"
-        if tombstone and hold_ack and hold_ack.get("result") not in {None, "rejected"}:
+        if tombstone and entries and not entries_empty:
             attr = "积分"
         summary = (
-            f"cancelled_without_hold 后迟到 hold rejected, request_id={rid}"
+            f"cancelled_without_hold entries=[] outbox acked; Hub hold 409, rid={rid}"
             if verdict == "PASS"
-            else "Hub 未发出无 hold 的 release，或迟到 hold 仍扣款"
+            else "E1 未满足 Hub 真 release 墓碑+409 门禁（不可用积分 rejected 凑绿）"
         )
         return self._case(
-            "E",
+            "E1",
             title,
             verdict,
             attr,
@@ -1281,6 +1436,99 @@ class Runner:
             issues,
             snap,
             [create, *probes, pump1, hold, pump2, task],
+            [f"hold.status={hold.status} ledger_phase/task={task.body}"],
+        )
+
+    def seq_e2(self) -> CaseResult:
+        title = "E2 本地传输模拟：取消前已在途的 task_hold（非 Hub 端到端）"
+        issues: list[HubIssue] = []
+        rid = self.e1_rid
+        notes = [
+            "非Hub端到端：直发积分 POST /internal/v0/meter-events，"
+            "模拟 Hub 已终态后仍在途的旧 evt_hold_<rid>。E1 的 409 不能替代本条。"
+        ]
+        if not rid:
+            return self._case(
+                "E2",
+                title,
+                "FAIL",
+                "环境",
+                "无 E1 request_id，未发送在途 hold",
+                "",
+                issues,
+                notes=notes,
+                mode="points-inbound-sim",
+            )
+        before = (
+            query_points(self.points_dsn, rid, self.e1_account)
+            if self.points_dsn
+            else {"billing": None, "entries": [], "available": None, "held": None}
+        )
+        envelope = late_hold_envelope(rid, self.e1_account, self.e1_estimate)
+        inbound = self.points_inbound(envelope)
+        after = (
+            query_points(self.points_dsn, rid, self.e1_account)
+            if self.points_dsn
+            else {"billing": None, "entries": [], "available": None, "held": None}
+        )
+        snap = {
+            "meter": {"task": None, "outbox": [], "note": "E2 does not pump Hub outbox"},
+            "points": after,
+            "acks": ack_results(load_capture(self.capture_path, rid)),
+            "before": before,
+            "e2_inbound": {"request": envelope, "response": inbound.body, "status": inbound.status},
+        }
+        body = inbound.body if isinstance(inbound.body, dict) else {}
+        rejected = inbound.status == 200 and body.get("result") == "rejected"
+        entries_after = list(after.get("entries") or [])
+        hold_debits = [
+            e
+            for e in entries_after
+            if e.get("kind") == "task_hold" and int(e.get("delta") or 0) < 0
+        ]
+        available_unchanged = before.get("available") == after.get("available")
+        held_unchanged = before.get("held") == after.get("held")
+        if not rejected:
+            issues.append(
+                HubIssue(
+                    "E2",
+                    "在途 hold 直发积分未 rejected",
+                    inbound.text,
+                    envelope,
+                    inbound.body,
+                )
+            )
+        if hold_debits:
+            issues.append(
+                HubIssue(
+                    "E2",
+                    "在途 hold 产生新扣款",
+                    json.dumps(hold_debits, ensure_ascii=False, default=str),
+                    envelope,
+                    after,
+                )
+            )
+        ok = rejected and not hold_debits and available_unchanged and held_unchanged
+        verdict = "PASS" if ok else "FAIL"
+        attr = "无" if verdict == "PASS" else "积分"
+        summary = (
+            f"直发 evt_hold_{rid} → rejected 且无新扣款（非 Hub e2e）"
+            if verdict == "PASS"
+            else "在途 hold 未被墓碑拒绝，或发生扣款"
+        )
+        notes.append(f"before={before} after={after}")
+        return self._case(
+            "E2",
+            title,
+            verdict,
+            attr,
+            summary,
+            rid,
+            issues,
+            snap,
+            [inbound],
+            notes,
+            mode="points-inbound-sim",
         )
 
     def seq_f(self) -> CaseResult:
@@ -1390,11 +1638,13 @@ class Runner:
         snap: dict[str, Any] | None = None,
         calls: list[HttpCall] | None = None,
         notes: list[str] | None = None,
+        mode: str = "hub",
     ) -> CaseResult:
         snap = snap or {"meter": {}, "points": {}, "acks": []}
         payload = {
             "seq": seq,
             "request_id": rid,
+            "mode": mode,
             "hub_http": [asdict(c) for c in (calls or [])],
             "snapshot": _jsonable(snap),
             "hub_issues": [asdict(i) for i in issues],
@@ -1422,6 +1672,7 @@ class Runner:
             hub_http=[asdict(c) for c in (calls or [])],
             hub_issues=[asdict(i) for i in issues],
             notes=notes or [],
+            mode=mode,
         )
 
     def _write_reports(self) -> None:
@@ -1430,7 +1681,8 @@ class Runner:
             "points_backend": self.points_backend,
             "clone": self.clone_note,
             "meter_repo": str(self.meter_repo) if self.meter_repo else None,
-            "kit_meter_pin": KIT_METER_PIN,
+            "kit_meter_pin": self.meter_pin,
+            "kit_meter_sha": self.meter_sha or None,
             "kit_accounts_head": _git_head(REPO_ROOT),
             "env_notes": self.env_notes,
             "cases": [asdict(c) for c in self.cases],
@@ -1457,6 +1709,7 @@ def render_markdown(run: dict[str, Any]) -> str:
         f"- 时间（UTC）：`{run.get('at')}`",
         f"- kit-accounts HEAD：`{run.get('kit_accounts_head')}`",
         f"- kit-meter pin：`{run.get('kit_meter_pin')}`",
+        f"- kit-meter HEAD（完整 SHA）：`{run.get('kit_meter_sha') or 'UNAVAILABLE'}`",
         f"- kit-meter 树：`{run.get('meter_repo') or 'UNAVAILABLE'}`",
         f"- 积分存储：`{run.get('points_backend')}`",
         f"- clone：{run.get('clone')}",
@@ -1481,6 +1734,7 @@ def render_markdown(run: dict[str, Any]) -> str:
             f"### {case['seq']} {case['verdict']} — {case['title']}",
             "",
             f"- request_id: `{case.get('request_id') or 'n/a'}`",
+            f"- 模式: `{case.get('mode') or 'hub'}`",
             f"- 卡点归属: **{case['attribution']}**",
             f"- 摘要: {case['summary']}",
             "",
@@ -1554,14 +1808,18 @@ def render_markdown(run: dict[str, Any]) -> str:
     lines += [
         "## 建议（仅报告，未改业务代码）",
         "",
-        "- 若 clone 失败：把 `lilei0311/kit-meter` 加入 GitHub App selected repos，",
-        "  或把已 checkout `e80920eb` 的树放到 `KIT_METER_REPO_ROOT`。",
+        "- 若 kit-meter 树不可用：把完整固定 SHA 放到 `KIT_METER_PIN`",
+        "  （默认锁 `40967aae` = kit-meter PR #9，不要合），",
+        "  `KIT_METER_REPO_ROOT` 的 HEAD 必须与 pin 一致；不一致会报错，",
+        "  不会悄悄 checkout。仅当明确 `KIT_METER_CHECKOUT_PIN=1` 才拨 HEAD。",
         "- C：Hub 必须把积分 `result=rejected`（HTTP 200）当成 hold 失败，",
         "  禁止 start/freeze，且不得再发 release 退款。",
         "- D：丢 ACK / 同 `event_id` 重放应回 `duplicate` + `original_result=applied`",
         "  + 原 `snapshot_ref`；Hub 仅在任务仍有效时放行模型。",
-        "- E：Hub 在从未 applied hold 时仍须能投递 `task_release`（墓碑）；",
-        "  账户已实现 `cancelled_without_hold`。",
+        "- E1：Hub 真实无 hold 先 release → 积分 `cancelled_without_hold`、entries=[]、",
+        "  outbox acked；终态后再 hold 必须 Hub HTTP 409（不可用积分 rejected 凑绿）。",
+        "- E2：本地直发积分 `/internal/v0/meter-events` 模拟在途 `evt_hold_<rid>`，",
+        "  须 `result=rejected` 且无新扣款。非 Hub 端到端；E1 的 409 不能替代 E2。",
         "- F：`shortfall` 已落账，Hub 应将 outbox 标终态并停止重试。",
         "",
     ]
