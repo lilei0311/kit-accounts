@@ -5,14 +5,12 @@ import pytest
 from maxkit_points import (
     ENTRY_KINDS,
     IdempotencyConflict,
-    InsufficientPoints,
     MemoryPointsStore,
     PointsEngine,
 )
 from maxkit_usage_bridge import (
     BillingStateError,
     InvalidUsageArgument,
-    MissingRateCard,
     PointsUsageSink,
     RateTable,
     UsageEvent,
@@ -54,15 +52,24 @@ def _text(
 
 def test_hold_rejects_insufficient_balance():
     engine, sink = _sink(amount=3)
-    with pytest.raises(InsufficientPoints):
-        sink.hold(
-            _text(input_units=0, output_units=10_000),
-            account_id="acct-1",
-            request_id="req-1",
-            billing="platform",
-        )
+    rejected = sink.hold(
+        _text(input_units=0, output_units=10_000),
+        account_id="acct-1",
+        request_id="req-1",
+        billing="platform",
+    )
+    assert rejected.status == "rejected"
+    assert rejected.reject_reason == "insufficient_points"
+    assert rejected.available_after == 3
     assert engine.available("acct-1") == 3
-    assert sink.get("req-1") is None
+    replay = sink.hold(
+        _text(input_units=0, output_units=10_000),
+        account_id="acct-1",
+        request_id="req-1",
+        billing="platform",
+    )
+    assert replay.status == "rejected"
+    assert replay.available_after == 3
 
 
 def test_settle_adjusts_down_and_up():
@@ -174,7 +181,7 @@ def test_byok_is_noop():
     assert settled.status == "skipped"
 
 
-def test_missing_card_refuses_platform_billing():
+def test_missing_card_stays_pending_config_for_same_payload():
     _, sink = _sink()
     event = UsageEvent(
         model_id="no-card",
@@ -184,8 +191,10 @@ def test_missing_card_refuses_platform_billing():
         input_units=10,
         output_units=0,
     )
-    with pytest.raises(MissingRateCard):
-        sink.hold(event, account_id="acct-1", request_id="miss", billing="platform")
+    pending = sink.hold(event, account_id="acct-1", request_id="miss", billing="platform")
+    assert pending.status == "pending_config"
+    again = sink.hold(event, account_id="acct-1", request_id="miss", billing="platform")
+    assert again.status == "pending_config"
 
 
 def test_seconds_and_zero_units_skip():
@@ -321,3 +330,100 @@ def test_cannot_release_after_settle():
     )
     with pytest.raises(BillingStateError):
         sink.release(account_id="acct-1", request_id="done")
+
+
+def test_release_before_hold_tombstone_blocks_late_hold():
+    engine, sink = _sink()
+    cancelled = sink.release(
+        account_id="acct-1",
+        request_id="early-release",
+        reason="hold_timeout",
+    )
+    assert cancelled.status == "cancelled"
+    assert cancelled.effect is not None
+    assert cancelled.effect["outcome"] == "cancelled"
+    late = sink.hold(
+        _text(input_units=0, output_units=10_000),
+        account_id="acct-1",
+        request_id="early-release",
+        billing="platform",
+    )
+    assert late.status == "cancelled"
+    assert engine.available("acct-1") == 1000
+    assert engine.held_amount("acct-1") == 0
+
+
+def test_settle_uses_frozen_rate_snapshot_not_live_reprice():
+    engine = _engine()
+    rates = RateTable.from_snapshot()
+    sink = PointsUsageSink(engine, rates)
+    held = sink.hold(
+        _text(input_units=0, output_units=10_000),
+        account_id="acct-1",
+        request_id="freeze",
+        billing="platform",
+    )
+    assert held.points == 8
+    assert held.snapshot_ref
+    # Mutate live table after hold — settle must still use frozen snapshot.
+    rates._token_rates[("demo-text-v0", "out")] = rates._token_rates[("demo-text-v0", "out")] * 10
+    settled = sink.settle(
+        _text(input_units=0, output_units=10_000),
+        account_id="acct-1",
+        request_id="freeze",
+        billing="platform",
+    )
+    assert settled.status == "settled"
+    assert settled.points == 8
+    assert engine.available("acct-1") == 992
+
+
+def test_wrong_snapshot_ref_conflicts_omitted_ref_ok():
+    _, sink = _sink()
+    held = sink.hold(
+        _text(input_units=0, output_units=5_000),
+        account_id="acct-1",
+        request_id="snap",
+        billing="platform",
+    )
+    ok = sink.settle(
+        _text(input_units=0, output_units=5_000),
+        account_id="acct-1",
+        request_id="snap",
+        billing="platform",
+        snapshot_ref=None,
+    )
+    assert ok.status == "settled"
+    engine2, sink2 = _sink()
+    sink2.hold(
+        _text(input_units=0, output_units=5_000),
+        account_id="acct-1",
+        request_id="snap2",
+        billing="platform",
+    )
+    with pytest.raises(InvalidUsageArgument):
+        sink2.settle(
+            _text(input_units=0, output_units=5_000),
+            account_id="acct-1",
+            request_id="snap2",
+            billing="platform",
+            snapshot_ref="not-the-local-ref",
+        )
+    assert held.snapshot_ref
+
+
+def test_meter_estimated_provenance_is_preserved():
+    _, sink = _sink()
+    event = UsageEvent(
+        model_id="demo-text-v0",
+        modality="text",
+        units=None,
+        unit_kind="tokens",
+        input_units=0,
+        output_units=10_000,
+        estimated=True,
+    )
+    held = sink.hold(event, account_id="acct-1", request_id="est-meter", billing="platform")
+    assert held.estimated is True
+    settled = sink.settle(event, account_id="acct-1", request_id="est-meter", billing="platform")
+    assert settled.estimated is True

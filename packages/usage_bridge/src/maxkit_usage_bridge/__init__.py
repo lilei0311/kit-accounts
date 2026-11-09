@@ -20,6 +20,11 @@ from maxkit_usage_bridge.models import (
     UsageEvent,
     UsageShortfall,
 )
+from maxkit_usage_bridge.rate_snapshot import (
+    freeze_rate_snapshot,
+    points_from_snapshot,
+    verify_snapshot_ref,
+)
 from maxkit_usage_bridge.rates import RateTable, compute_points, compute_token_points
 from maxkit_usage_bridge.sink import PointsUsageSink
 from maxkit_usage_bridge.snapshot import STATIC_CARD_SNAPSHOT
@@ -42,6 +47,9 @@ __all__ = [
     "UsageShortfall",
     "compute_points",
     "compute_token_points",
+    "freeze_rate_snapshot",
+    "points_from_snapshot",
+    "verify_snapshot_ref",
 ]
 
 __version__ = "0.1.0"

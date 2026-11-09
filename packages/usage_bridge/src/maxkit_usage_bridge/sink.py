@@ -4,6 +4,12 @@ The app injects this sink. The library does not start an HTTP gateway and
 does not import kit-model-router. Ledger writes reuse consume-track
 ``task_hold`` / ``task_settlement`` / ``task_release``, plus formal
 ``usage_shortfall`` when a settle top-up cannot cover the remainder.
+
+Request lifecycle is keyed solely by immutable ``request_id``. Transport
+event IDs are ignored for accounting. Hold freezes a local rate snapshot;
+settle/release price from that snapshot (or conflict if an explicit wrong
+``snapshot_ref`` is supplied). Release-before-hold writes a cancellation
+tombstone so a late hold cannot debit.
 """
 
 from __future__ import annotations
@@ -11,18 +17,15 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
-from threading import RLock
 
 from maxkit_points import IdempotencyConflict, InsufficientPoints, PointsEngine
+from maxkit_points.billing_request import BillingRequest, BillingRequestStore
 from maxkit_points.models import OwnerKind
 from maxkit_usage_bridge.constants import BILLABLE_UNIT_KINDS, UNBILLED_UNIT_KINDS
-from maxkit_usage_bridge.errors import (
-    BillingStateError,
-    InvalidUsageArgument,
-    MissingRateCard,
-)
+from maxkit_usage_bridge.errors import BillingStateError, InvalidUsageArgument
 from maxkit_usage_bridge.models import (
     BillingMode,
     BillingResult,
@@ -30,34 +33,37 @@ from maxkit_usage_bridge.models import (
     UsageEvent,
     UsageShortfall,
 )
+from maxkit_usage_bridge.rate_snapshot import (
+    freeze_rate_snapshot,
+    points_from_snapshot,
+    verify_snapshot_ref,
+)
 from maxkit_usage_bridge.rates import RateTable
 
 _BILLING_MODES = ("platform", "byok")
 _OWNER_KINDS = ("person", "org")
-
-
-@dataclass
-class _RequestState:
-    request_id: str
-    account_id: str
-    payload_hash: str
-    status: BillingStatus
-    hold_ids: list[str] = field(default_factory=list)
-    points: int = 0
-    estimated: bool = False
-    shortfall_points: int = 0
-    skipped_reason: str | None = None
-    model_id: str = ""
-    unit_kind: str = ""
+_REPLAYABLE = frozenset(
+    {
+        "pending_config",
+        "held",
+        "settled",
+        "released",
+        "cancelled",
+        "rejected",
+        "shortfall",
+        "skipped",
+    }
+)
 
 
 class PointsUsageSink:
     """Application-injected UsageSink: RateTable convert + points verbs.
 
     ``account_id`` / ``request_id`` come from the app. ``UsageEvent`` stays
-    a pure usage record (model, modality, unit_kind, plus tokens I/O or
-    non-token units). ``idempotency_key`` for the primary hold is
-    ``request_id``.
+    a pure usage record. ``idempotency_key`` for the primary hold is
+    ``request_id``. Billing request rows are stored on the engine store when
+    it implements ``BillingRequestStore`` (MemoryPointsStore and
+    PostgresPointsStore both do).
     """
 
     def __init__(
@@ -66,13 +72,21 @@ class PointsUsageSink:
         rates: RateTable,
         *,
         on_shortfall: Callable[[UsageShortfall], None] | None = None,
+        requests: BillingRequestStore | None = None,
     ) -> None:
         self._engine = engine
         self._rates = rates
         self._on_shortfall = on_shortfall
-        self._lock = RLock()
-        self._requests: dict[str, _RequestState] = {}
-        self.shortfalls: list[UsageShortfall] = []
+        store = engine.store
+        if requests is not None:
+            self._requests = requests
+        elif hasattr(store, "save_billing_request"):
+            self._requests = store  # type: ignore[assignment]
+        else:
+            raise InvalidUsageArgument(
+                "engine store must implement BillingRequestStore "
+                "(MemoryPointsStore / PostgresPointsStore) or pass requests="
+            )
 
     def hold(
         self,
@@ -88,102 +102,205 @@ class PointsUsageSink:
         mode = _require_billing(billing)
         _require_owner_kind(owner_kind)
         model_id, unit_kind = _event_key(event)
+        now = datetime.now(UTC)
 
-        if mode != "platform":
-            return self._skip(
-                request,
-                account,
-                payload=_payload(
-                    account_id=account,
-                    billing=mode,
+        with self._engine.transaction():
+            existing = self._requests.lock_billing_request(request)
+            if existing is not None:
+                self._assert_account(existing, account)
+                if existing.status == "cancelled":
+                    return self._result(existing)
+                if existing.status in _REPLAYABLE and existing.payload_hash:
+                    # Intent checked below after payload is known for platform holds.
+                    pass
+
+            if mode != "platform":
+                return self._persist_skip(
+                    request,
+                    account,
+                    existing=existing,
+                    payload=_payload(
+                        account_id=account,
+                        billing=mode,
+                        model_id=model_id,
+                        unit_kind=unit_kind,
+                        points=0,
+                        estimated=False,
+                        skipped_reason="byok",
+                    ),
+                    reason="byok",
                     model_id=model_id,
                     unit_kind=unit_kind,
-                    points=0,
-                    estimated=False,
-                    skipped_reason="byok",
-                ),
-                reason="byok",
-                model_id=model_id,
-                unit_kind=unit_kind,
-            )
-        if unit_kind in UNBILLED_UNIT_KINDS:
-            return self._skip(
-                request,
-                account,
-                payload=_payload(
-                    account_id=account,
                     billing=mode,
+                    now=now,
+                )
+            if unit_kind in UNBILLED_UNIT_KINDS:
+                return self._persist_skip(
+                    request,
+                    account,
+                    existing=existing,
+                    payload=_payload(
+                        account_id=account,
+                        billing=mode,
+                        model_id=model_id,
+                        unit_kind=unit_kind,
+                        points=0,
+                        estimated=False,
+                        skipped_reason="unbillable_unit",
+                    ),
+                    reason="unbillable_unit",
                     model_id=model_id,
                     unit_kind=unit_kind,
-                    points=0,
-                    estimated=False,
-                    skipped_reason="unbillable_unit",
-                ),
-                reason="unbillable_unit",
-                model_id=model_id,
-                unit_kind=unit_kind,
-            )
-        if unit_kind not in BILLABLE_UNIT_KINDS:
-            raise MissingRateCard(model_id, unit_kind)
-
-        quantity = _resolve_quantity(event)
-        if quantity.points_units == 0:
-            return self._skip(
-                request,
-                account,
-                payload=_payload(
-                    account_id=account,
                     billing=mode,
+                    now=now,
+                )
+            if unit_kind not in BILLABLE_UNIT_KINDS:
+                return self._persist_pending_or_conflict(
+                    request,
+                    account,
+                    existing=existing,
+                    payload=_payload(
+                        account_id=account,
+                        billing=mode,
+                        model_id=model_id,
+                        unit_kind=unit_kind,
+                        points=0,
+                        estimated=False,
+                        skipped_reason="missing_rate",
+                    ),
                     model_id=model_id,
                     unit_kind=unit_kind,
-                    points=0,
-                    estimated=False,
-                    skipped_reason="no_usage",
-                    input_units=quantity.input_units,
-                    output_units=quantity.output_units,
-                ),
-                reason="no_usage",
+                    billing=mode,
+                    now=now,
+                )
+
+            quantity = _resolve_quantity(event)
+            if quantity.points_units == 0:
+                return self._persist_skip(
+                    request,
+                    account,
+                    existing=existing,
+                    payload=_payload(
+                        account_id=account,
+                        billing=mode,
+                        model_id=model_id,
+                        unit_kind=unit_kind,
+                        points=0,
+                        estimated=False,
+                        skipped_reason="no_usage",
+                        input_units=quantity.input_units,
+                        output_units=quantity.output_units,
+                    ),
+                    reason="no_usage",
+                    model_id=model_id,
+                    unit_kind=unit_kind,
+                    billing=mode,
+                    now=now,
+                )
+
+            if not self._rates.has_rate(model_id, unit_kind):
+                return self._persist_pending_or_conflict(
+                    request,
+                    account,
+                    existing=existing,
+                    payload=_payload(
+                        account_id=account,
+                        billing=mode,
+                        model_id=model_id,
+                        unit_kind=unit_kind,
+                        points=0,
+                        estimated=quantity.estimated,
+                        skipped_reason="missing_rate",
+                        input_units=quantity.input_units,
+                        output_units=quantity.output_units,
+                    ),
+                    model_id=model_id,
+                    unit_kind=unit_kind,
+                    billing=mode,
+                    now=now,
+                )
+
+            rate_snapshot = freeze_rate_snapshot(
+                self._rates, model_id=model_id, unit_kind=unit_kind
+            )
+            points = self._points_for_live(event, quantity)
+            payload = _payload(
+                account_id=account,
+                billing=mode,
                 model_id=model_id,
                 unit_kind=unit_kind,
+                points=points,
+                estimated=quantity.estimated,
+                skipped_reason=None,
+                input_units=quantity.input_units,
+                output_units=quantity.output_units,
             )
-        if not self._rates.has_rate(model_id, unit_kind):
-            raise MissingRateCard(model_id, unit_kind)
+            if existing is not None:
+                replay = self._replay_hold(existing, payload)
+                if replay is not None:
+                    return replay
 
-        points = self._points_for(event, quantity)
-        payload = _payload(
-            account_id=account,
-            billing=mode,
-            model_id=model_id,
-            unit_kind=unit_kind,
-            points=points,
-            estimated=quantity.estimated,
-            skipped_reason=None,
-            input_units=quantity.input_units,
-            output_units=quantity.output_units,
-        )
-        with self._lock:
-            replay = self._replay(request, payload)
-            if replay is not None:
-                return self._result(replay)
-            hold = self._engine.apply_hold(
-                owner_id=account,
-                amount=points,
-                key=request,
-                owner_kind=owner_kind,
-                ref=request,
-            )
-            state = _RequestState(
+            try:
+                hold = self._engine.apply_hold(
+                    owner_id=account,
+                    amount=points,
+                    key=request,
+                    owner_kind=owner_kind,
+                    ref=request,
+                )
+            except InsufficientPoints as exc:
+                state = BillingRequest(
+                    request_id=request,
+                    account_id=account,
+                    status="rejected",
+                    payload_hash=payload,
+                    rate_snapshot=rate_snapshot,
+                    snapshot_ref=rate_snapshot["snapshot_ref"],
+                    points=points,
+                    estimated=quantity.estimated,
+                    reject_reason="insufficient_points",
+                    model_id=model_id,
+                    unit_kind=unit_kind,
+                    billing=mode,
+                    available_after=exc.available,
+                    effect={
+                        "operation": "hold",
+                        "outcome": "rejected",
+                        "requested": points,
+                        "available": exc.available,
+                    },
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._requests.save_billing_request(state)
+                return self._result(state)
+
+            available = self._engine.available(account)
+            state = BillingRequest(
                 request_id=request,
                 account_id=account,
-                payload_hash=payload,
                 status="held",
+                payload_hash=payload,
+                rate_snapshot=rate_snapshot,
+                snapshot_ref=rate_snapshot["snapshot_ref"],
                 hold_ids=[hold.id],
                 points=points,
                 estimated=quantity.estimated,
                 model_id=model_id,
                 unit_kind=unit_kind,
+                billing=mode,
+                available_after=available,
+                effect={
+                    "operation": "hold",
+                    "outcome": "held",
+                    "points": points,
+                    "hold_ids": [hold.id],
+                    "available": available,
+                },
+                created_at=now,
+                updated_at=now,
             )
-            self._requests[request] = state
+            self._requests.save_billing_request(state)
             return self._result(state)
 
     def settle(
@@ -194,20 +311,23 @@ class PointsUsageSink:
         request_id: str,
         billing: BillingMode,
         owner_kind: OwnerKind = "person",
+        snapshot_ref: str | None = None,
     ) -> BillingResult:
         account = _require_text(account_id, "account_id")
         request = _require_text(request_id, "request_id")
         mode = _require_billing(billing)
         _require_owner_kind(owner_kind)
         model_id, unit_kind = _event_key(event)
+        now = datetime.now(UTC)
 
-        with self._lock:
-            state = self._requests.get(request)
+        with self._engine.transaction():
+            state = self._requests.lock_billing_request(request)
             if state is None:
                 if mode != "platform" or unit_kind in UNBILLED_UNIT_KINDS:
-                    return self._skip(
+                    return self._persist_skip(
                         request,
                         account,
+                        existing=None,
                         payload=_payload(
                             account_id=account,
                             billing=mode,
@@ -220,87 +340,176 @@ class PointsUsageSink:
                         reason="byok" if mode != "platform" else "unbillable_unit",
                         model_id=model_id,
                         unit_kind=unit_kind,
+                        billing=mode,
+                        now=now,
                     )
+                # Missing-hold settle must not guess a rate.
                 raise BillingStateError(request, "missing", "settle")
-            if state.account_id != account:
-                raise IdempotencyConflict(request)
-            if state.status in {"settled", "shortfall", "skipped"}:
+            self._assert_account(state, account)
+            if state.status in {"settled", "shortfall", "skipped", "cancelled", "rejected"}:
                 return self._result(state)
+            if state.status == "pending_config":
+                raise BillingStateError(request, state.status, "settle")
+            if state.status == "released":
+                raise BillingStateError(request, state.status, "settle")
             if state.status != "held":
                 raise BillingStateError(request, state.status, "settle")
+            if state.rate_snapshot is None:
+                raise BillingStateError(request, "missing_rate_snapshot", "settle")
+            verify_snapshot_ref(state.rate_snapshot, snapshot_ref)
 
-            actual_points, estimated = self._actual_points(event, state)
+            actual_points, estimated = self._actual_points_from_snapshot(event, state)
+            settle_hash = _payload(
+                account_id=account,
+                billing=mode,
+                model_id=model_id,
+                unit_kind=unit_kind,
+                points=actual_points,
+                estimated=estimated,
+                skipped_reason=None,
+                input_units=_quantity_io(event)[0],
+                output_units=_quantity_io(event)[1],
+            )
+            if state.settle_payload_hash and state.settle_payload_hash != settle_hash:
+                raise IdempotencyConflict(request)
+            state.settle_payload_hash = settle_hash
+
             if actual_points == 0:
                 self._release_held(state)
                 state.status = "released"
                 state.points = 0
                 state.estimated = estimated
+                state.available_after = self._engine.available(account)
+                state.effect = {
+                    "operation": "settle",
+                    "outcome": "released",
+                    "points": 0,
+                    "available": state.available_after,
+                }
+                state.updated_at = now
+                self._requests.save_billing_request(state)
                 return self._result(state)
             if actual_points == state.points:
                 for hold_id in state.hold_ids:
                     self._engine.apply_consume_settle(hold_id)
                 state.status = "settled"
                 state.estimated = state.estimated or estimated
+                state.available_after = self._engine.available(account)
+                state.effect = {
+                    "operation": "settle",
+                    "outcome": "settled",
+                    "points": state.points,
+                    "hold_ids": list(state.hold_ids),
+                    "available": state.available_after,
+                }
+                state.updated_at = now
+                self._requests.save_billing_request(state)
                 return self._result(state)
             if actual_points < state.points:
-                return self._settle_less(state, actual_points, estimated, owner_kind)
-            return self._settle_more(state, actual_points, estimated, owner_kind)
+                return self._settle_less(state, actual_points, estimated, owner_kind, now)
+            return self._settle_more(state, actual_points, estimated, owner_kind, now)
 
     def release(
         self,
         *,
         account_id: str,
         request_id: str,
+        snapshot_ref: str | None = None,
+        reason: str | None = None,
     ) -> BillingResult:
         account = _require_text(account_id, "account_id")
         request = _require_text(request_id, "request_id")
-        with self._lock:
-            state = self._requests.get(request)
+        now = datetime.now(UTC)
+        with self._engine.transaction():
+            state = self._requests.lock_billing_request(request)
             if state is None:
-                state = _RequestState(
+                # Authoritative release before any applied hold: cancellation
+                # tombstone, no refund, late hold cannot debit.
+                state = BillingRequest(
                     request_id=request,
                     account_id=account,
+                    status="cancelled",
                     payload_hash="",
-                    status="skipped",
-                    skipped_reason="missing",
+                    skipped_reason=reason or "release_before_hold",
+                    reject_reason=None,
+                    available_after=self._engine.available(account),
+                    effect={
+                        "operation": "release",
+                        "outcome": "cancelled",
+                        "reason": reason or "release_before_hold",
+                        "available": self._engine.available(account),
+                    },
+                    created_at=now,
+                    updated_at=now,
                 )
-                self._requests[request] = state
+                self._requests.save_billing_request(state)
                 return self._result(state)
-            if state.account_id != account:
-                raise IdempotencyConflict(request)
-            if state.status in {"released", "skipped"}:
+            self._assert_account(state, account)
+            if state.status in {"released", "cancelled", "skipped", "rejected"}:
+                return self._result(state)
+            if state.status in {"settled", "shortfall"}:
+                raise BillingStateError(request, state.status, "release")
+            if state.status == "pending_config":
+                state.status = "cancelled"
+                state.skipped_reason = reason or "release_before_hold"
+                state.available_after = self._engine.available(account)
+                state.effect = {
+                    "operation": "release",
+                    "outcome": "cancelled",
+                    "reason": state.skipped_reason,
+                    "available": state.available_after,
+                }
+                state.updated_at = now
+                self._requests.save_billing_request(state)
                 return self._result(state)
             if state.status != "held":
                 raise BillingStateError(request, state.status, "release")
+            if state.rate_snapshot is not None:
+                verify_snapshot_ref(state.rate_snapshot, snapshot_ref)
             self._release_held(state)
             state.status = "released"
+            state.available_after = self._engine.available(account)
+            state.effect = {
+                "operation": "release",
+                "outcome": "released",
+                "reason": reason,
+                "points_restored": state.points,
+                "available": state.available_after,
+            }
+            state.updated_at = now
+            self._requests.save_billing_request(state)
             return self._result(state)
 
     def get(self, request_id: str) -> BillingResult | None:
         request = _require_text(request_id, "request_id")
-        with self._lock:
-            state = self._requests.get(request)
+        with self._engine.transaction():
+            state = self._requests.get_billing_request(request)
             return None if state is None else self._result(state)
 
-    def _actual_points(self, event: UsageEvent, state: _RequestState) -> tuple[int, bool]:
+    def _actual_points_from_snapshot(
+        self, event: UsageEvent, state: BillingRequest
+    ) -> tuple[int, bool]:
+        assert state.rate_snapshot is not None
         model_id, unit_kind = _event_key(event)
         if unit_kind == "tokens":
             quantity = _resolve_quantity(event)
             if quantity.points_units == 0:
-                return 0, False
-            if not self._rates.has_rate(model_id, unit_kind):
-                raise MissingRateCard(model_id, unit_kind)
-            return self._points_for(event, quantity), quantity.estimated
+                return 0, _estimated_flag(event, quantity.estimated)
+            points = points_from_snapshot(
+                state.rate_snapshot,
+                input_units=quantity.input_units,
+                output_units=quantity.output_units,
+            )
+            return points, _estimated_flag(event, quantity.estimated)
         if event.units is None:
             return state.points, state.estimated
         quantity = _resolve_quantity(event)
         if quantity.points_units == 0:
             return 0, False
-        if not self._rates.has_rate(model_id, unit_kind):
-            raise MissingRateCard(model_id, unit_kind)
-        return self._points_for(event, quantity), quantity.estimated
+        points = points_from_snapshot(state.rate_snapshot, units=quantity.units)
+        return points, _estimated_flag(event, quantity.estimated)
 
-    def _points_for(self, event: UsageEvent, quantity: _Quantity) -> int:
+    def _points_for_live(self, event: UsageEvent, quantity: _Quantity) -> int:
         model_id, unit_kind = _event_key(event)
         if unit_kind == "tokens":
             if quantity.input_units is None or quantity.output_units is None:
@@ -314,10 +523,11 @@ class PointsUsageSink:
 
     def _settle_less(
         self,
-        state: _RequestState,
+        state: BillingRequest,
         actual_points: int,
         estimated: bool,
         owner_kind: OwnerKind,
+        now: datetime,
     ) -> BillingResult:
         self._release_held(state)
         hold = self._engine.apply_hold(
@@ -332,14 +542,26 @@ class PointsUsageSink:
         state.points = actual_points
         state.estimated = estimated
         state.status = "settled"
+        state.available_after = self._engine.available(state.account_id)
+        state.effect = {
+            "operation": "settle",
+            "outcome": "settled",
+            "points": actual_points,
+            "hold_ids": list(state.hold_ids),
+            "available": state.available_after,
+            "adjustment": "refund_excess",
+        }
+        state.updated_at = now
+        self._requests.save_billing_request(state)
         return self._result(state)
 
     def _settle_more(
         self,
-        state: _RequestState,
+        state: BillingRequest,
         actual_points: int,
         estimated: bool,
         owner_kind: OwnerKind,
+        now: datetime,
     ) -> BillingResult:
         needed = actual_points - state.points
         try:
@@ -366,7 +588,18 @@ class PointsUsageSink:
             state.status = "shortfall"
             state.shortfall_points = needed
             state.estimated = estimated
-            self.shortfalls.append(shortfall)
+            state.available_after = self._engine.available(state.account_id)
+            state.effect = {
+                "operation": "settle",
+                "outcome": "shortfall",
+                "points": state.points,
+                "shortfall_points": needed,
+                "actual_points": actual_points,
+                "hold_ids": list(state.hold_ids),
+                "available": state.available_after,
+            }
+            state.updated_at = now
+            self._requests.save_billing_request(state)
             if self._on_shortfall is not None:
                 self._on_shortfall(shortfall)
             return self._result(state)
@@ -376,9 +609,20 @@ class PointsUsageSink:
         state.points = actual_points
         state.estimated = estimated
         state.status = "settled"
+        state.available_after = self._engine.available(state.account_id)
+        state.effect = {
+            "operation": "settle",
+            "outcome": "settled",
+            "points": actual_points,
+            "hold_ids": list(state.hold_ids),
+            "available": state.available_after,
+            "adjustment": "topup",
+        }
+        state.updated_at = now
+        self._requests.save_billing_request(state)
         return self._result(state)
 
-    def _write_shortfall_audit(self, state: _RequestState) -> None:
+    def _write_shortfall_audit(self, state: BillingRequest) -> None:
         if not state.hold_ids:
             return
         hold = self._engine.get_hold(state.hold_ids[0])
@@ -393,57 +637,129 @@ class PointsUsageSink:
             ref=state.request_id,
         )
 
-    def _release_held(self, state: _RequestState) -> None:
+    def _release_held(self, state: BillingRequest) -> None:
         for hold_id in state.hold_ids:
             hold = self._engine.get_hold(hold_id)
             if hold.status == "held":
                 self._engine.apply_release(hold_id)
 
-    def _skip(
+    def _persist_skip(
         self,
         request: str,
         account: str,
         *,
+        existing: BillingRequest | None,
         payload: str,
         reason: str,
         model_id: str,
         unit_kind: str,
+        billing: str,
+        now: datetime,
     ) -> BillingResult:
-        with self._lock:
-            replay = self._replay(request, payload)
-            if replay is not None:
-                return self._result(replay)
-            state = _RequestState(
-                request_id=request,
-                account_id=account,
-                payload_hash=payload,
-                status="skipped",
-                skipped_reason=reason,
-                model_id=model_id,
-                unit_kind=unit_kind,
-            )
-            self._requests[request] = state
-            return self._result(state)
+        if existing is not None:
+            self._assert_account(existing, account)
+            if existing.status == "cancelled":
+                return self._result(existing)
+            if existing.payload_hash and existing.payload_hash != payload:
+                raise IdempotencyConflict(request)
+            if existing.status in _REPLAYABLE:
+                return self._result(existing)
+        available = self._engine.available(account)
+        state = BillingRequest(
+            request_id=request,
+            account_id=account,
+            status="skipped",
+            payload_hash=payload,
+            skipped_reason=reason,
+            model_id=model_id,
+            unit_kind=unit_kind,
+            billing=billing,
+            available_after=available,
+            effect={
+                "operation": "hold",
+                "outcome": "skipped",
+                "reason": reason,
+                "available": available,
+            },
+            created_at=now,
+            updated_at=now,
+        )
+        self._requests.save_billing_request(state)
+        return self._result(state)
 
-    def _replay(self, request_id: str, payload: str) -> _RequestState | None:
-        existing = self._requests.get(request_id)
-        if existing is None:
-            return None
-        if existing.payload_hash != payload:
-            raise IdempotencyConflict(request_id)
-        return existing
+    def _persist_pending_or_conflict(
+        self,
+        request: str,
+        account: str,
+        *,
+        existing: BillingRequest | None,
+        payload: str,
+        model_id: str,
+        unit_kind: str,
+        billing: str,
+        now: datetime,
+    ) -> BillingResult:
+        if existing is not None:
+            self._assert_account(existing, account)
+            if existing.status == "cancelled":
+                return self._result(existing)
+            if existing.payload_hash and existing.payload_hash != payload:
+                raise IdempotencyConflict(request)
+            if existing.status == "pending_config":
+                return self._result(existing)
+            if existing.status in _REPLAYABLE:
+                return self._result(existing)
+        available = self._engine.available(account)
+        state = BillingRequest(
+            request_id=request,
+            account_id=account,
+            status="pending_config",
+            payload_hash=payload,
+            skipped_reason="missing_rate",
+            model_id=model_id,
+            unit_kind=unit_kind,
+            billing=billing,
+            available_after=available,
+            effect={
+                "operation": "hold",
+                "outcome": "pending_config",
+                "available": available,
+            },
+            created_at=now,
+            updated_at=now,
+        )
+        self._requests.save_billing_request(state)
+        return self._result(state)
 
-    def _result(self, state: _RequestState) -> BillingResult:
+    def _replay_hold(self, existing: BillingRequest, payload: str) -> BillingResult | None:
+        if existing.status == "cancelled":
+            return self._result(existing)
+        if existing.payload_hash and existing.payload_hash != payload:
+            raise IdempotencyConflict(existing.request_id)
+        if existing.status in _REPLAYABLE and existing.payload_hash:
+            return self._result(existing)
+        return None
+
+    def _assert_account(self, state: BillingRequest, account: str) -> None:
+        if state.account_id != account:
+            raise IdempotencyConflict(state.request_id)
+
+    def _result(self, state: BillingRequest) -> BillingResult:
+        status: BillingStatus = state.status  # type: ignore[assignment]
         return BillingResult(
             request_id=state.request_id,
             account_id=state.account_id,
-            status=state.status,
+            status=status,
             points=state.points,
             hold_ids=tuple(state.hold_ids),
             estimated=state.estimated,
             shortfall_points=state.shortfall_points,
             skipped_reason=state.skipped_reason,
             points_per_yuan=self._rates.points_per_yuan,
+            reject_reason=state.reject_reason,
+            available_after=state.available_after,
+            snapshot_ref=state.snapshot_ref,
+            effect=dict(state.effect),
         )
 
 
@@ -485,16 +801,36 @@ def _resolve_quantity(event: UsageEvent) -> _Quantity:
             units=None,
             input_units=incoming,
             output_units=outgoing,
-            estimated=False,
+            estimated=_estimated_flag(event, False),
         )
     if event.units is None:
-        return _Quantity(units=Decimal(1), input_units=None, output_units=None, estimated=True)
+        return _Quantity(
+            units=Decimal(1),
+            input_units=None,
+            output_units=None,
+            estimated=_estimated_flag(event, True),
+        )
     return _Quantity(
         units=_as_nonneg_decimal(event.units, "units"),
         input_units=None,
         output_units=None,
-        estimated=False,
+        estimated=_estimated_flag(event, False),
     )
+
+
+def _estimated_flag(event: UsageEvent, default: bool) -> bool:
+    if event.estimated is None:
+        return default
+    if not isinstance(event.estimated, bool):
+        raise InvalidUsageArgument("estimated must be a bool when set")
+    return event.estimated
+
+
+def _quantity_io(event: UsageEvent) -> tuple[Decimal | None, Decimal | None]:
+    if event.unit_kind == "tokens":
+        quantity = _resolve_quantity(event)
+        return quantity.input_units, quantity.output_units
+    return None, None
 
 
 def _as_nonneg_decimal(value: int | float | Decimal, field: str) -> Decimal:

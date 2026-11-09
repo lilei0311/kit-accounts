@@ -51,7 +51,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 - 余额可以由分录重建：`rebuild_lots` / `PointsEngine.balances_match_ledger`。零额审计不改 `opened`。正的 `task_settlement` 会重建成 `earned` lot，那是 `apply_grant(origin="earned")` 的形状；消费结算不写这种正数。
 - 同一 owner 可以同时有多笔 `held`。幂等按 hold key，不按任务 id 去重。
 - 产品 SKU 价格留在应用里。引擎只收点数 `amount`。需要审计时把外部 id 放进 `ref`。
-- 存储是内存里的 `PointsStore`。SQLAlchemy 不在本阶段。
+- 存储口是 `PointsStore`：默认 `MemoryPointsStore`；可选 `PostgresPointsStore`（schema `points`，见 [docs/postgres-points.md](docs/postgres-points.md)）。SQLAlchemy 仍不引入。运行时只用最少权限 DSN，**不**在启动时跑 DDL。
 - 稳定调用面（供日后 FastAPI 薄壳直接 import，本仓不起 HTTP）：`apply_hold`（幂等 `key`）、`apply_consume_settle`、`apply_release`。没有 `settle` 别名，以免和竞赛轨 `applySettle` 混淆。
 
 ## 用量 → 积分桥
@@ -84,7 +84,7 @@ uv run maxkit-s1-l1 --contract contract.yaml --source source.txt --deliverable b
 
 - 竞赛轨 winner 入账（yangong `applySettle`）。
 - 订阅周期、每日领取的产品规则，以及 story-clip 的 SKU 价格。
-- SQLAlchemy / 真 ORM。应用自己实现 `PointsStore` 之前，用内存适配。
+- SQLAlchemy / 真 ORM。应用可用 `MemoryPointsStore` 或可选 `PostgresPointsStore`（迁移由 ops DDL 身份执行）。
 - 不改 story-clip，也不让它 import 本仓。
 - 无支付适配、无真实用户、无密钥。
 - 不建 `app-maxstorm-api`、不上 EC2、不起 HTTP 网关。组件式布局（`type` + `props` + `slots`/`children`）只在接线文档里钉方向，本仓不实现 block catalog / React / Vue。

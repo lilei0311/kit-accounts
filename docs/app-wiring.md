@@ -10,6 +10,9 @@
 # future app-maxstorm-api (NOT in this repo)
 from maxkit_identity import IdentityService
 from maxkit_points import PointsEngine, MemoryPointsStore
+# Durable option (ops-migrated schema "points"; runtime DSN is least-privilege):
+# from maxkit_points.postgres import PostgresPointsStore
+# store = PostgresPointsStore.from_env()  # MAXKIT_POINTS_DSN / MAXKIT_POINTS_SCHEMA
 from maxkit_usage_bridge import (
     POINTS_PER_YUAN,   # 100; config constant, not a public price
     PointsUsageSink,
@@ -17,11 +20,14 @@ from maxkit_usage_bridge import (
     UsageEvent,
 )
 
-engine = PointsEngine(store=app_points_store)          # app implements PointsStore
+engine = PointsEngine(store=app_points_store)          # MemoryPointsStore or PostgresPointsStore
 rates = RateTable.from_snapshot()                      # or inject app-owned cards
 # rates = RateTable(rates={(model_id, unit_kind): yuan_per_unit})
 # tokens: (model_id, "tokens", "in"|"out") → yuan_per_token; non-tokens stay (model_id, unit_kind)
 sink = PointsUsageSink(engine, rates)                  # app injects the sink
+# Hold freezes a local rate snapshot; settle/release use it (no silent reprice).
+# Release-before-hold writes cancelled tombstone; late hold cannot debit.
+# See docs/postgres-points.md. Hub HTTP callbacks are NOT in this kit yet.
 
 person = identity.require_person(session_token)
 event = UsageEvent(

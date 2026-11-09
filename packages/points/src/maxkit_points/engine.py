@@ -61,6 +61,15 @@ class PointsEngine:
         self._store = store or MemoryPointsStore()
         self._clock = clock or (lambda: datetime.now(UTC))
 
+    @property
+    def store(self) -> PointsStore:
+        return self._store
+
+    def transaction(self):
+        """Join the store transaction (reentrant). Used by multi-step sink verbs."""
+
+        return self._store.transaction()
+
     def apply_grant(
         self,
         *,
@@ -95,6 +104,7 @@ class PointsEngine:
             }
         )
         with self._store.transaction():
+            self._store.lock_idempotency_key(grant_key)
             replay = self._replay("grant", grant_key, payload)
             if replay is not None:
                 return self._must_lot(replay)
@@ -176,63 +186,78 @@ class PointsEngine:
                 "paid_only": paid_only,
             }
         )
+        # Sweep commits even when the hold then fails for insufficient points.
+        hold: Hold | None = None
+        insufficient: InsufficientPoints | None = None
         with self._store.transaction():
+            self._store.lock_idempotency_key(hold_key)
             replay = self._replay("hold", hold_key, payload)
             if replay is not None:
-                return self._must_hold(replay)
-            if supplied_hold_id is not None and self._store.get_hold(supplied_hold_id) is not None:
-                raise InvalidPointsArgument(f"hold id already exists: {supplied_hold_id}")
-            self._assert_owner_kind(owner, owner_kind)
-            now = self._now()
-            self._sweep(owner, now)
-            slices = self._plan(owner, amount, now, paid_only=paid_only)
-            chosen_id = supplied_hold_id or self._store.next_id("hold")
-            if self._store.get_hold(chosen_id) is not None:
-                raise InvalidPointsArgument(f"hold id already exists: {chosen_id}")
-            hold = Hold(
-                id=chosen_id,
-                owner_id=owner,
-                owner_kind=owner_kind,
-                amount=amount,
-                status="held",
-                slices=slices,
-                ref=external_ref,
-                key=hold_key,
-                created_at=now,
-                updated_at=now,
-            )
-            validate("hold", hold.to_dict())
-            staged: list[tuple[PointLot, Entry]] = []
-            for slice_ in slices:
-                lot = self._must_lot(slice_.lot_id)
-                lot.opened -= slice_.amount
-                self._check_lot(lot)
-                validate("point_lot", lot.to_dict())
-                entry = self._build_entry(
-                    owner_id=owner,
-                    lot_id=lot.id,
-                    hold_id=hold.id,
-                    kind="task_hold",
-                    delta=-slice_.amount,
-                    ref=external_ref,
-                    key=f"{hold_key}:{lot.id}",
-                    lot_expires_at=slice_.expires_at,
-                    now=now,
-                )
-                staged.append((lot, entry))
-            for lot, entry in staged:
-                self._store.save_lot(lot)
-                self._commit_entry(entry)
-            self._store.save_hold(hold)
-            self._store.put_idempotency(
-                IdempotencyRecord(
-                    key=hold_key,
-                    scope="hold",
-                    payload_hash=payload,
-                    target_id=hold.id,
-                )
-            )
-            return hold
+                hold = self._must_hold(replay)
+            else:
+                if (
+                    supplied_hold_id is not None
+                    and self._store.get_hold(supplied_hold_id) is not None
+                ):
+                    raise InvalidPointsArgument(f"hold id already exists: {supplied_hold_id}")
+                self._assert_owner_kind(owner, owner_kind)
+                now = self._now()
+                self._sweep(owner, now)
+                try:
+                    slices = self._plan(owner, amount, now, paid_only=paid_only)
+                except InsufficientPoints as exc:
+                    insufficient = exc
+                else:
+                    chosen_id = supplied_hold_id or self._store.next_id("hold")
+                    if self._store.get_hold(chosen_id) is not None:
+                        raise InvalidPointsArgument(f"hold id already exists: {chosen_id}")
+                    hold = Hold(
+                        id=chosen_id,
+                        owner_id=owner,
+                        owner_kind=owner_kind,
+                        amount=amount,
+                        status="held",
+                        slices=slices,
+                        ref=external_ref,
+                        key=hold_key,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    validate("hold", hold.to_dict())
+                    staged: list[tuple[PointLot, Entry]] = []
+                    for slice_ in slices:
+                        lot = self._must_lot(slice_.lot_id)
+                        lot.opened -= slice_.amount
+                        self._check_lot(lot)
+                        validate("point_lot", lot.to_dict())
+                        entry = self._build_entry(
+                            owner_id=owner,
+                            lot_id=lot.id,
+                            hold_id=hold.id,
+                            kind="task_hold",
+                            delta=-slice_.amount,
+                            ref=external_ref,
+                            key=f"{hold_key}:{lot.id}",
+                            lot_expires_at=slice_.expires_at,
+                            now=now,
+                        )
+                        staged.append((lot, entry))
+                    for lot, entry in staged:
+                        self._store.save_lot(lot)
+                        self._commit_entry(entry)
+                    self._store.save_hold(hold)
+                    self._store.put_idempotency(
+                        IdempotencyRecord(
+                            key=hold_key,
+                            scope="hold",
+                            payload_hash=payload,
+                            target_id=hold.id,
+                        )
+                    )
+        if insufficient is not None:
+            raise insufficient
+        assert hold is not None
+        return hold
 
     def apply_release(self, hold_id: str) -> Hold:
         """Return ``opened`` for slices still inside their expiry.
